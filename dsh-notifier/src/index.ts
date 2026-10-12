@@ -1,5 +1,6 @@
 import { resolveConfig, Config, type NotifierConfig } from './config.ts';
 import { NotificationDispatcher } from './dispatcher.ts';
+import { startSettingsServer, stopSettingsServer } from './server.ts';
 
 export const name = 'notifier';
 // sessions 为历史兼容保留，插件实际不使用会话存储。
@@ -16,16 +17,76 @@ export interface ApplyOptions {
 
 const MAX_TRACKED_TURNS = 200;
 
+/** 统一日志前缀，与根总线风格保持一致。 */
+const LOG_PREFIX = '[dsh-notifier]';
+
+/**
+ * 取 Cordis 原生 logger，缺失时优雅降级到控制台。
+ *
+ * `ctx` 是 Cordis Proxy：访问未声明 `inject` 的服务属性会直接抛错，
+ * 因此 `ctx.logger?.(...)` 也必须包在 try 中，否则插件会在启动阶段崩溃。
+ *
+ * 注意：日志文案自带 `[dsh-notifier]` 前缀，兜底实现不再重复添加，
+ * 保证「有无 Cordis logger」两种情况下输出文本完全一致。
+ */
+function resolveLogger(ctx: any): { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void } {
+  let logger: any;
+  try {
+    logger = ctx?.logger?.(name);
+  } catch {
+    logger = undefined;
+  }
+  if (!logger) {
+    return {
+      info: (...args: unknown[]) => console.info(...args),
+      warn: (...args: unknown[]) => console.warn(...args),
+      error: (...args: unknown[]) => console.error(...args),
+    };
+  }
+
+  const pick = (level: 'info' | 'warn' | 'error') =>
+    typeof logger[level] === 'function'
+      ? (...args: unknown[]) => logger[level](...args)
+      : (...args: unknown[]) => console[level](...args);
+
+  return { info: pick('info'), warn: pick('warn'), error: pick('error') };
+}
+
+/** 生成设置看板就绪提示，形如 `[dsh-notifier] 设置看板已就绪: http://127.0.0.1:3088`。 */
+export function formatReadyMessage(url: string): string {
+  return `${LOG_PREFIX} 设置看板已就绪: ${url}`;
+}
+
 export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): void {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
+  const logger = resolveLogger(ctx);
 
   const turnStartTimes = new Map<string, number>();
+
+  // ── 内置设置看板服务 ────────────────────────────────────────────────────
+  // 仅在配置显式开启时启动；启动失败绝不拖垮插件本体（通知能力优先于看板）。
+  const serverEnabled = config.server?.enabled !== false;
+  if (serverEnabled) {
+    void startSettingsServer({
+      port: config.server?.port,
+      config,
+      logger,
+    })
+      .then((handle) => {
+        logger.info(formatReadyMessage(handle.url));
+      })
+      .catch((error: unknown) => {
+        logger.warn(`${LOG_PREFIX} 设置看板启动失败，通知功能不受影响:`, error);
+      });
+  }
 
   // Ensure cleanup on plugin reload / unmount
   if (typeof ctx.on === 'function') {
     ctx.on('dispose', () => {
       turnStartTimes.clear();
+      // 平稳关停服务，防止端口与连接句柄泄漏（热重载会反复进出 apply）。
+      void stopSettingsServer().catch(() => undefined);
     });
   }
 

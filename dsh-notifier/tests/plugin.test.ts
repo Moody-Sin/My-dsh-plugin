@@ -102,6 +102,12 @@ test('plugin: exports expected Cordis interfaces', () => {
   assert.equal(typeof apply, 'function');
 });
 
+/**
+ * 本文件只验证通知派发逻辑，与设置看板服务无关。
+ * 显式关闭 `server` 以免用例在开发者机器上真实占用端口（默认 3088）。
+ */
+const NO_SERVER = { server: { enabled: false } };
+
 test('plugin: attaches listeners and processes turn/start -> turn/end cycle', async () => {
   const ctx = createMockContext();
   let dispatchedTurnEnd = false;
@@ -113,7 +119,7 @@ test('plugin: attaches listeners and processes turn/start -> turn/end cycle', as
     onError: async () => {},
   };
 
-  apply(ctx as any, {}, { dispatcher: mockDispatcher as any });
+  apply(ctx as any, NO_SERVER, { dispatcher: mockDispatcher as any });
 
   assert.ok(ctx.listeners['session/event']?.length, 'session/event must be registered');
 
@@ -148,7 +154,7 @@ test('plugin: waterfall user-questions/request delegates to next() and triggers 
     onError: async () => {},
   };
 
-  apply(ctx as any, {}, { dispatcher: mockDispatcher as any });
+  apply(ctx as any, NO_SERVER, { dispatcher: mockDispatcher as any });
 
   let finalNextCalled = false;
   const result = await ctx.waterfall(
@@ -176,7 +182,7 @@ test('plugin: waterfall approval/request delegates to next() and triggers dispat
     onError: async () => {},
   };
 
-  apply(ctx as any, {}, { dispatcher: mockDispatcher as any });
+  apply(ctx as any, NO_SERVER, { dispatcher: mockDispatcher as any });
 
   let finalNextCalled = false;
   const result = await ctx.waterfall(
@@ -216,7 +222,7 @@ test('plugin: turn/end carries session title under Cordis Proxy-like ctx', async
   );
   const { calls, dispatcher } = createRecordingDispatcher();
 
-  apply(ctx, {}, { dispatcher: dispatcher as any });
+  apply(ctx, NO_SERVER, { dispatcher: dispatcher as any });
 
   ctx.emit('session/event', session, { type: 'turn/start', data: { turn: 1 } });
   await new Promise(r => setTimeout(r, 15));
@@ -234,7 +240,7 @@ test('plugin: falls back to session.header.cwd when sessionTitle service is miss
   const ctx = createProxyLikeContext({}, inject as string[]);
   const { calls, dispatcher } = createRecordingDispatcher();
 
-  apply(ctx, {}, { dispatcher: dispatcher as any });
+  apply(ctx, NO_SERVER, { dispatcher: dispatcher as any });
 
   ctx.emit('session/event', session, {
     type: 'turn/end',
@@ -250,7 +256,7 @@ test('plugin: returns undefined session title without throwing when no source ex
   const ctx = createProxyLikeContext({}, inject as string[]);
   const { calls, dispatcher } = createRecordingDispatcher();
 
-  apply(ctx, {}, { dispatcher: dispatcher as any });
+  apply(ctx, NO_SERVER, { dispatcher: dispatcher as any });
 
   assert.doesNotThrow(() => {
     ctx.emit('session/event', session, {
@@ -271,7 +277,7 @@ test('plugin: still dispatches notifications when sessionTitle service is absent
   const { calls, dispatcher } = createRecordingDispatcher();
 
   assert.doesNotThrow(() => {
-    apply(ctx, {}, { dispatcher: dispatcher as any });
+    apply(ctx, NO_SERVER, { dispatcher: dispatcher as any });
   }, '服务缺失时插件装载不得抛错');
 
   assert.ok(ctx.listeners['session/event']?.length, 'session/event 监听器必须注册成功（插件已激活）');

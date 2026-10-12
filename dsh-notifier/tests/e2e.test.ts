@@ -39,6 +39,8 @@ test('e2e: bundled index.js successfully runs full lifecycle', async () => {
   };
 
   const testConfig = {
+    // 关闭设置看板：e2e 只验证通知生命周期，不应在真实端口上起服务。
+    server: { enabled: false },
     desktop: { enabled: true, minDurationSeconds: 0 },
     sound: { enabled: true },
     events: {
@@ -110,6 +112,7 @@ test('e2e: bundled index.js successfully runs full lifecycle', async () => {
 test('e2e: bundled plugin filters turns by events.minDurationSeconds with desktop disabled', async () => {
   const dispatched: string[] = [];
   const config = resolveConfig({
+    server: { enabled: false },
     desktop: { enabled: false, minDurationSeconds: 1 },
     sound: { enabled: false },
     events: { onTurnEnd: true, minDurationSeconds: 20 },
@@ -204,6 +207,93 @@ test('e2e: Windows 场景下弹窗与声音合并为一次桌面调用', async (
   assert.equal(desktopOptions.soundEnabled, true);
   assert.equal(desktopOptions.soundKind, 'success');
   assert.equal(desktopOptions.subtitle, '构建流水线');
+});
+
+test('e2e: 打包产物按配置启动设置看板，并在 dispose 时释放端口', async () => {
+  const listeners: Record<string, Function[]> = {};
+  const logged: string[] = [];
+  const ctx: any = {
+    listeners,
+    on(event: string, callback: Function) {
+      if (!listeners[event]) listeners[event] = [];
+      listeners[event].push(callback);
+    },
+    emit(event: string, ...args: any[]) {
+      for (const fn of listeners[event] || []) fn(...args);
+    },
+    // 模拟 Cordis logger，便于断言就绪文案。
+    logger: () => ({
+      info: (...args: unknown[]) => logged.push(args.map(String).join(' ')),
+      warn: () => undefined,
+      error: () => undefined,
+    }),
+  };
+
+  const dispatcher = {
+    onTurnEnd: async () => {},
+    onUserQuestion: async () => {},
+    onApproval: async () => {},
+    onError: async () => {},
+  };
+
+  // 端口传 0 让系统分配空闲端口，避免与开发者机器上的真实 3088 冲突。
+  apply(ctx, { server: { enabled: true, port: 0 } }, { dispatcher: dispatcher as any });
+
+  // 启动是异步的，等待就绪日志出现。
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !logged.some((line) => line.includes('设置看板已就绪'))) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+
+  const readyLine = logged.find((line) => line.includes('设置看板已就绪'));
+  assert.ok(readyLine, '必须输出设置看板就绪日志');
+  assert.match(readyLine, /\[dsh-notifier\] 设置看板已就绪: http:\/\/127\.0\.0\.1:\d+/);
+
+  const url = readyLine!.match(/http:\/\/127\.0\.0\.1:\d+/)![0];
+  const response = await fetch(`${url}/api/config`);
+  assert.equal(response.status, 200, '打包后的服务必须真的可读');
+
+  // 触发 dispose：服务必须随之关闭、端口释放。
+  ctx.emit('dispose');
+  const closedDeadline = Date.now() + 5000;
+  let freed = false;
+  while (Date.now() < closedDeadline && !freed) {
+    await new Promise((r) => setTimeout(r, 20));
+    freed = !(await fetch(`${url}/api/config`).then(() => true).catch(() => false));
+  }
+  assert.ok(freed, 'dispose 后设置服务必须关闭，端口不得泄漏');
+});
+
+test('e2e: server.enabled 为 false 时不启动看板且不输出就绪日志', async () => {
+  const listeners: Record<string, Function[]> = {};
+  const logged: string[] = [];
+  const ctx: any = {
+    listeners,
+    on(event: string, callback: Function) {
+      if (!listeners[event]) listeners[event] = [];
+      listeners[event].push(callback);
+    },
+    logger: () => ({
+      info: (...args: unknown[]) => logged.push(args.map(String).join(' ')),
+      warn: () => undefined,
+      error: () => undefined,
+    }),
+  };
+
+  apply(ctx, { server: { enabled: false } }, {
+    dispatcher: {
+      onTurnEnd: async () => {},
+      onUserQuestion: async () => {},
+      onApproval: async () => {},
+      onError: async () => {},
+    } as any,
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(
+    !logged.some((line) => line.includes('设置看板已就绪')),
+    '显式关闭时不得启动看板服务'
+  );
 });
 
 test('e2e: 英文环境下派发英文通知文案与小时级耗时', async () => {

@@ -33,6 +33,14 @@ export interface WebhookConfig {
   secret?: string;
 }
 
+/** 内置设置看板与一键测试服务配置。 */
+export interface ServerConfig {
+  /** 是否随插件启动设置看板服务，默认 `true`。 */
+  enabled: boolean;
+  /** 监听端口，默认 `3088`；被占用时会自动向后探测可用端口。 */
+  port: number;
+}
+
 export interface NotifierConfig {
   /**
    * 通知文案语言：`auto` 按环境变量判断，或强制 `zh`/`en`；默认 `auto`。
@@ -43,10 +51,15 @@ export interface NotifierConfig {
   sound: SoundConfig;
   events: EventsConfig;
   webhook: WebhookConfig;
+  /** 设置看板服务；可省略，`resolveConfig()` 保证返回对象中必定存在。 */
+  server?: ServerConfig;
 }
 
 /** 默认语言设置：`auto` 表示按运行环境自动判断中英文。 */
 const DEFAULT_LOCALE: LocaleSetting = 'auto';
+
+/** 设置看板默认端口，与 `src/server.ts` 的 `DEFAULT_PORT` 保持一致。 */
+export const DEFAULT_SERVER_PORT = 3088;
 
 export const DEFAULT_CONFIG: NotifierConfig = {
   locale: DEFAULT_LOCALE,
@@ -71,6 +84,10 @@ export const DEFAULT_CONFIG: NotifierConfig = {
     url: '',
     secret: '',
   },
+  server: {
+    enabled: true,
+    port: DEFAULT_SERVER_PORT,
+  },
 };
 
 const VALID_PROVIDERS = new Set<WebhookProvider>([
@@ -92,6 +109,13 @@ function normalizeDurationSeconds(value: unknown): number | undefined {
     : undefined;
 }
 
+/** 将候选值规整为合法端口（1~65535 整数），非法输入返回 undefined。 */
+function normalizePort(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const port = Math.floor(value);
+  return port >= 1 && port <= 65535 ? port : undefined;
+}
+
 /** 校验语言配置，非法值回落 `auto`。 */
 function normalizeLocale(value: unknown): LocaleSetting {
   return typeof value === 'string' && VALID_LOCALES.has(value as LocaleSetting)
@@ -107,6 +131,7 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
       sound: { ...DEFAULT_CONFIG.sound },
       events: { ...DEFAULT_CONFIG.events },
       webhook: { ...DEFAULT_CONFIG.webhook },
+      server: { ...DEFAULT_CONFIG.server! },
     };
   }
 
@@ -115,6 +140,7 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
   const soundRaw = raw.sound && typeof raw.sound === 'object' ? raw.sound : {};
   const eventsRaw = raw.events && typeof raw.events === 'object' ? raw.events : {};
   const webhookRaw = raw.webhook && typeof raw.webhook === 'object' ? raw.webhook : {};
+  const serverRaw = raw.server && typeof raw.server === 'object' ? raw.server : {};
 
   const desktopMin = normalizeDurationSeconds(desktopRaw.minDurationSeconds);
   const eventsMin = normalizeDurationSeconds(eventsRaw.minDurationSeconds);
@@ -148,6 +174,10 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
       url: typeof webhookRaw.url === 'string' ? webhookRaw.url : DEFAULT_CONFIG.webhook.url,
       secret: typeof webhookRaw.secret === 'string' ? webhookRaw.secret : DEFAULT_CONFIG.webhook.secret,
     },
+    server: {
+      enabled: typeof serverRaw.enabled === 'boolean' ? serverRaw.enabled : DEFAULT_CONFIG.server!.enabled,
+      port: normalizePort(serverRaw.port) ?? DEFAULT_CONFIG.server!.port,
+    },
   };
 }
 
@@ -162,7 +192,7 @@ const SCHEMA_DICT = {
   locale: {
     type: 'string',
     description: '通知文案语言：auto（按 DSH_LOCALE/LANG/LC_ALL 自动判断）| zh | en，默认 auto',
-    meta: {},
+    meta: { volatile: true },
   },
   desktop: {
     type: 'object',
@@ -171,7 +201,7 @@ const SCHEMA_DICT = {
     // 且会递归遍历 dict 的每一个子节点，因此每个节点都必须带 meta，否则设置面板会崩溃。
     meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否启用操作系统原生桌面弹窗通知', meta: {} },
+      enabled: { type: 'boolean', description: '是否启用操作系统原生桌面弹窗通知', meta: { volatile: true } },
       minDurationSeconds: { type: 'number', description: '[已废弃] 请改用 events.minDurationSeconds', meta: {} },
     },
   },
@@ -180,7 +210,7 @@ const SCHEMA_DICT = {
     description: '系统提示音配置（Windows 下由桌面 Toast 内联播放，不额外启动子进程）',
     meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否在通知时播放系统提示音', meta: {} },
+      enabled: { type: 'boolean', description: '是否在通知时播放系统提示音', meta: { volatile: true } },
     },
   },
   events: {
@@ -188,14 +218,14 @@ const SCHEMA_DICT = {
     description: '事件开关与过滤阈值配置',
     meta: {},
     dict: {
-      onTurnEnd: { type: 'boolean', description: '任务完成时是否通知', meta: {} },
-      onQuestion: { type: 'boolean', description: 'Agent 提问等待回答时是否通知', meta: {} },
-      onApproval: { type: 'boolean', description: 'Agent 申请权限审批时是否通知', meta: {} },
-      onError: { type: 'boolean', description: 'Agent 执行异常时是否通知', meta: {} },
+      onTurnEnd: { type: 'boolean', description: '任务完成时是否通知', meta: { volatile: true } },
+      onQuestion: { type: 'boolean', description: 'Agent 提问等待回答时是否通知', meta: { volatile: true } },
+      onApproval: { type: 'boolean', description: 'Agent 申请权限审批时是否通知', meta: { volatile: true } },
+      onError: { type: 'boolean', description: 'Agent 执行异常时是否通知', meta: { volatile: true } },
       minDurationSeconds: {
         type: 'number',
         description: '任务完成通知的耗时过滤阈值（秒），默认 5；与桌面渠道开关解耦',
-        meta: {},
+        meta: { volatile: true },
       },
     },
   },
@@ -204,18 +234,27 @@ const SCHEMA_DICT = {
     description: 'Webhook 离机推送渠道配置',
     meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送', meta: {} },
+      enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送', meta: { volatile: true } },
       provider: {
         type: 'string',
         description: '渠道类型：feishu | dingtalk | wecom | bark | telegram | discord | generic',
-        meta: {},
+        meta: { volatile: true },
       },
-      url: { type: 'string', description: 'Webhook 机器人地址', meta: {} },
+      url: { type: 'string', description: 'Webhook 机器人地址', meta: { volatile: true } },
       secret: {
         type: 'string',
         description: '签名密钥（可选）；telegram 渠道下作为 chat_id',
-        meta: {},
+        meta: { volatile: true },
       },
+    },
+  },
+  server: {
+    type: 'object',
+    description: '内置设置看板与一键测试服务（改动需重启 DSH 后生效）',
+    meta: {},
+    dict: {
+      enabled: { type: 'boolean', description: '是否随插件启动本地设置看板服务，默认 true', meta: {} },
+      port: { type: 'number', description: '设置看板监听端口，默认 3088；被占用时自动向后探测', meta: {} },
     },
   },
 };

@@ -81,7 +81,10 @@ test('config: Config.toJSON exposes a serializable schema description', () => {
 
   assert.equal(json.type, 'object');
   assert.equal(json.description, 'DSH Notifier Configuration');
-  assert.deepEqual(Object.keys(json.dict).sort(), ['desktop', 'events', 'locale', 'sound', 'webhook']);
+  assert.deepEqual(
+    Object.keys(json.dict).sort(),
+    ['desktop', 'events', 'locale', 'server', 'sound', 'webhook']
+  );
   assert.deepEqual(JSON.parse(JSON.stringify(Config)), json);
 });
 
@@ -159,6 +162,32 @@ test('config: locale 默认为 auto 且仅接受 auto、zh、en', () => {
   assert.equal(resolveConfig({ locale: 'fr' }).locale, 'auto');
 });
 
+test('config: server 配置默认启用 3088 端口且规整非法端口', () => {
+  assert.deepEqual(DEFAULT_CONFIG.server, { enabled: true, port: 3088 });
+
+  const config = resolveConfig({});
+  assert.deepEqual(config.server, { enabled: true, port: 3088 });
+
+  assert.equal(resolveConfig({ server: { port: 4099 } }).server?.port, 4099);
+  assert.equal(resolveConfig({ server: { enabled: false } }).server?.enabled, false);
+  // 非法端口一律回落默认：0、负数、越界与非数字都不允许污染绑定逻辑。
+  assert.equal(resolveConfig({ server: { port: 0 } }).server?.port, 3088);
+  assert.equal(resolveConfig({ server: { port: -1 } }).server?.port, 3088);
+  assert.equal(resolveConfig({ server: { port: 99999 } }).server?.port, 3088);
+  assert.equal(resolveConfig({ server: { port: '3088' as any } }).server?.port, 3088);
+  assert.equal(resolveConfig({ server: { port: 3088.7 } }).server?.port, 3088);
+});
+
+test('config: server 节点出现在 Schema 中且带有 meta', () => {
+  const json = Config.toJSON();
+  assert.equal(json.dict.server.type, 'object');
+  assert.equal(json.dict.server.dict.enabled.type, 'boolean');
+  assert.equal(json.dict.server.dict.port.type, 'number');
+  assert.ok(json.dict.server.meta, 'server 节点必须带 meta');
+  assert.ok(json.dict.server.dict.enabled.meta, 'server.enabled 必须带 meta');
+  assert.ok(json.dict.server.dict.port.meta, 'server.port 必须带 meta');
+});
+
 test('config: Telegram 与 Discord 是有效 Webhook 提供商', () => {
   assert.equal(resolveConfig({ webhook: { provider: 'telegram' } }).webhook.provider, 'telegram');
   assert.equal(resolveConfig({ webhook: { provider: 'discord' } }).webhook.provider, 'discord');
@@ -166,7 +195,10 @@ test('config: Telegram 与 Discord 是有效 Webhook 提供商', () => {
 
 test('config: Schema 暴露 locale 与全部提供商且每个节点都有 meta', () => {
   const json = Config.toJSON();
-  assert.deepEqual(Object.keys(json.dict).sort(), ['desktop', 'events', 'locale', 'sound', 'webhook']);
+  assert.deepEqual(
+    Object.keys(json.dict).sort(),
+    ['desktop', 'events', 'locale', 'server', 'sound', 'webhook']
+  );
   assert.equal(json.dict.locale.type, 'string');
   assert.match(json.dict.webhook.dict.provider.description, /telegram/);
   assert.match(json.dict.webhook.dict.provider.description, /discord/);

@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-10-12
+
+### 新增 (Added)
+- **内置轻量 HTTP 设置看板与一键测试服务**（`src/server.ts`）：基于 **Node.js 原生 `node:http`** 实现，**零额外 npm 依赖**，不引入任何第三方包。
+  - `GET /`：单页设置应用（内联 CSS/JS，无外部资源引用），中英双语、`prefers-color-scheme` 深色/浅色自适应。卡片化布局：通用与语言、系统桌面与声音、任务与事件过滤、Webhook 离机推送、**一键测试区**、保存选项。
+  - `GET /api/config`：返回归一化后的配置、原始切片与默认值，供前端回填。
+  - `POST /api/config`：写入 `plugins.config.json`，可选把机密凭据分流到 `plugins.config.local.json`，由根总线 300ms 热重载生效。
+  - `POST /api/test`：一键测试 `desktop` / `sound` / `webhook` 三个渠道；Webhook 使用前端**当前填写的临时配置**（无需先保存），并返回 `latencyMs` 发送耗时与结果状态。
+- **端口自适应**：默认 `3088`，被占用时自动向后探测（最多 20 个）；`strictPort` 可强制失败；端口传 `0` 时交由系统分配空闲端口。
+- `startSettingsServer()` / `stopSettingsServer()` 优雅启停接口，服务句柄统一 `unref`，绝不把宿主进程钉死。
+- 新增 `server` 配置段（`{ enabled: true, port: 3088 }`），插件启动时输出 `[dsh-notifier] 设置看板已就绪: http://127.0.0.1:<port>`。
+- **一键测试区**三个按钮：发送测试弹窗、播放测试提示音、测试 Webhook 发送（实时展示耗时与服务端响应状态）。
+- 保存区提供【将机密凭据保存至本地私有覆盖 (plugins.config.local.json)】复选框。
+
+### 变更 (Changed)
+- `SCHEMA_DICT` 的可编辑节点（语言、桌面/声音开关、事件开关与阈值、Webhook 全字段）标注 `meta: { volatile: true }`，所有节点仍保证带 `meta`，满足 DSH `volatileForm()` / `isVolatilePath()` 的递归读取要求。
+- 保存配置采用「表单托管字段叠加」策略：只覆盖看板实际暴露的字段，`server.port` 等表单未暴露的配置不会被 `resolveConfig` 的默认值静默重置。
+
+### 修复 (Fixed)
+- 保存时清除本地私有覆盖中的受管非机密字段：此前本地覆盖以最高权威存在时，会静默压掉看板刚写入的新值，导致「点了保存却毫无变化」。
+- 未勾选「保存到本地私有覆盖」时凭据正常落基础配置（此前会被静默丢弃）。
+- 空/纯空格 Webhook URL 的测试请求明确返回 400 而非发起无效请求。
+- 非法 JSON 请求体返回 400（此前为 500），便于前端区分客户端与服务端错误。
+- 设置服务监听句柄 `unref`，修复仅剩该句柄时进程无法退出的问题。
+
+### 测试 (Tests)
+- 新增 `tests/server.test.ts`（19 项）：HTML 内联与零外部资源、配置渲染与转义、`/api/config` 读写、三渠道测试分派、机密隔离与本地残留清除、兄弟插件配置不被覆盖、端口探测与 `strictPort`、启停与端口释放、404/400/413 边界。
+- 新增 e2e 用例：打包产物按配置启动看板、就绪日志格式、`dispose` 后端口释放、`server.enabled: false` 时不启动。
+- 新增 manifest 用例：打包产物不得 import/require 任何第三方模块（零依赖硬约束）。
+- 测试套件扩充至 104 项。
+
 ## [0.3.0] - 2026-10-12
 
 ### 新增 (Added)

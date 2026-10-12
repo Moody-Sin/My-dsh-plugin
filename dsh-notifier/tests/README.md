@@ -20,8 +20,9 @@ npm test
 | [`dispatcher.test.ts`](./dispatcher.test.ts) | `formatDuration()` 中英文边界（含小时级）、四类事件的派发与开关、耗时阈值过滤、Webhook 不被桌面开关连带过滤、阈值缺失时的 5 秒兜底、Windows 声音内联委托与单进程策略、非 Windows 分离调用、200ms 事件去重与窗口过期。 |
 | [`channels.test.ts`](./channels.test.ts) | `escapeXml()` 控制字符剥离；三平台桌面通知与提示音的命令构造及失败降级；WinRT Toast 内联音频与静音回退；Linux `-u critical` 与 `-i` 图标；macOS `subtitle`；七类 Webhook 载荷、飞书/钉钉签名、Telegram `chat_id` 语义、Discord Embed 配色、重试与不重试的边界。 |
 | [`plugin.test.ts`](./plugin.test.ts) | 插件入口契约、`turn/start → turn/end` 生命周期、两个 waterfall 正确委派 `next()`、`sessionTitle` 的取值与多种降级路径、新增 `locale` 与渠道配置经入口 Schema 的解析。 |
-| [`e2e.test.ts`](./e2e.test.ts) | 对**打包产物** `index.js` 跑完整生命周期，覆盖 `events.minDurationSeconds` 在桌面渠道关闭时仍生效、Windows 弹窗与声音合并为单次桌面调用、英文环境下经打包代码输出英文文案与小时级耗时。 |
-| [`manifest.test.ts`](./manifest.test.ts) | 插件清单校验：`package.json` 的 DSH bundle 元数据、`exports` 与版本号、`cordis.patch.yml` 入口、`locale/zh.json` 与 `locale/en.json` 的 `meta` 与 `notifications` 词条、`icon.svg` 存在且体积合规、`CHANGELOG` 与版本号同步。 |
+| [`server.test.ts`](./server.test.ts) | 设置看板服务：SPA 内联且零外部资源、配置渲染与转义、`/api/config` 读写、三渠道测试分派、机密隔离与本地残留清除、兄弟插件配置不被覆盖、端口探测与 `strictPort`、启停与端口释放、404/400/413 边界。 |
+| [`e2e.test.ts`](./e2e.test.ts) | 对**打包产物** `index.js` 跑完整生命周期，覆盖 `events.minDurationSeconds` 在桌面渠道关闭时仍生效、Windows 弹窗与声音合并为单次桌面调用、设置看板按配置启动与 `dispose` 释放端口、`server.enabled: false` 时不启动、英文环境下经打包代码输出英文文案与小时级耗时。 |
+| [`manifest.test.ts`](./manifest.test.ts) | 插件清单校验：`package.json` 的 DSH bundle 元数据、`exports` 与版本号、`cordis.patch.yml` 入口、`locale/zh.json` 与 `locale/en.json` 的 `meta` 与 `notifications` 词条、`icon.svg` 存在且体积合规、**打包产物零第三方依赖**、`CHANGELOG` 与版本号同步。 |
 
 ## 关键设计要点
 
@@ -37,3 +38,7 @@ npm test
 - **服务完全缺失时插件仍正常激活、通知照常派发**，只是少一行标题，绝不因取标题失败而丢弃通知。
 
 **`dispatcher.test.ts` 与 `e2e.test.ts` 通过 `DispatcherOptions.platform` / `nowFn` / `debounceMs` 注入平台与时钟，全程不触达真实子进程与网络。**
+
+**`server.test.ts` 与 `e2e.test.ts` 通过 `port: 0` 让操作系统分配空闲端口，并配合 `createTempRoot()` 生成一次性临时项目根目录**，因此既不会与开发者机器上真实的 `3088` 冲突，也不会污染仓库中的 `plugins.config.json`。
+
+另一个易踩的坑：**调用 `apply()` 的测试必须显式传 `server: { enabled: false }`**（`plugin.test.ts` 用 `NO_SERVER` 常量）。否则每个用例都会真实绑定一个端口；虽然服务句柄已 `unref()` 不会挂住进程，但会在开发者机器上留下监听端口，属测试副作用。
