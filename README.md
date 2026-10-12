@@ -21,7 +21,7 @@
 
 | 插件名称 | 目录 | 版本 | 简介 |
 | :--- | :--- | :--- | :--- |
-| **`@local/dsh-plugin-notifier`** | [`dsh-plugin-notifier/`](./dsh-plugin-notifier) | `v0.2.0` | 跨平台系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/通用 Webhook 离机通知插件。 |
+| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.2.0` | 跨平台系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/通用 Webhook 离机通知插件。 |
 
 ## 开发指南
 

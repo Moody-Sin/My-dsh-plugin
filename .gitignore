@@ -3,6 +3,9 @@ node_modules/
 lib/
 dist/
 
+# 本地敏感配置（不入库）
+plugins.config.local.json
+
 # 日志与调试输出
 *.log
 npm-debug.log*

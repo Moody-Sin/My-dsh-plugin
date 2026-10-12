@@ -12,7 +12,7 @@ test('manifest: package.json has valid DSH bundle metadata', () => {
   assert.ok(fs.existsSync(pkgPath), 'package.json must exist');
 
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-  assert.equal(pkg.name, '@local/dsh-plugin-notifier');
+  assert.equal(pkg.name, '@local/dsh-notifier');
   assert.equal(pkg.type, 'module');
   assert.ok(pkg.dsh, 'pkg.dsh must be defined');
   assert.equal(pkg.dsh.bundle?.patch, './cordis.patch.yml');
@@ -26,7 +26,7 @@ test('manifest: cordis.patch.yml exists and declares notifier entry', () => {
   assert.ok(fs.existsSync(patchPath), 'cordis.patch.yml must exist');
   const content = fs.readFileSync(patchPath, 'utf-8');
   assert.match(content, /id:\s*notifier/);
-  assert.match(content, /name:\s*['"]?@local\/dsh-plugin-notifier['"]?/);
+  assert.match(content, /name:\s*['"]?@local\/dsh-notifier['"]?/);
 });
 
 test('manifest: locale zh and en files have valid meta titles and descriptions', () => {

@@ -1,5 +1,5 @@
 {
-  "name": "@local/dsh-plugin-notifier",
+  "name": "@local/dsh-notifier",
   "version": "0.2.0",
   "description": "Cross-platform desktop and webhook notifications for DeepSeek Harness",
   "private": true,

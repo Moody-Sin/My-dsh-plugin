@@ -1,4 +1,4 @@
-# @local/dsh-plugin-notifier
+# @local/dsh-notifier
 
 [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
 
@@ -40,7 +40,7 @@
 ### 方式一：通过 DSH Plugin CLI 安装到指定 Profile（推荐）
 
 ```bash
-dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-plugin-notifier
+dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-notifier
 ```
 
 ### 方式二：在 Profile `cordis.patch.yml` 中挂载
@@ -50,7 +50,7 @@ dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-plugin-notifier
 ```yaml
 - insert:
     - id: notifier
-      name: '@local/dsh-plugin-notifier'
+      name: '@local/dsh-notifier'
       config:
         desktop:
           enabled: true

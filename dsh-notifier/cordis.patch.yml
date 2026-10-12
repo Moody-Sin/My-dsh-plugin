@@ -1,7 +1,7 @@
 # DeepSeek Harness Notification Plugin Layer
 - insert:
     - id: notifier
-      name: '@local/dsh-plugin-notifier'
+      name: '@local/dsh-notifier'
       config:
         desktop:
           enabled: true
