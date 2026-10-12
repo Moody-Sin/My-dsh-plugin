@@ -14,3 +14,13 @@
 
 ## 4. 国际化与测试套件确定性
 - **引入 `locale: 'auto'` 时测试必须显式锁定语言**：动态从系统环境变量（`LANG`/`DSH_LOCALE`）推导语言会导致断言硬编码文案的测试在不同机器或 CI 语言环境下发生漂移。涉及文案断言的单元测试应显式注入 `locale: 'zh'` 或 `locale: 'en'`。
+
+## 5. DSH 设置表单（Schemastery / volatile 引用）
+- **`toJSON()` 必须返回深拷贝**：DSH `plainSchema()` 对返回值只做**浅层** `Object.assign`，随后 `walk()` **就地** `delete node.meta.volatile`。返回共享引用会在**第一次**渲染就抹掉模块级 Schema 的标记，第二次渲染表单整片消失。跨模块共享的 Schema 常量尤其危险。
+- **`[Symbol.for('schemastery')]: true` 的对象不是真 schema**：DSH 会对**每个** volatile 节点调用 `new z(node.toJSON())`，因此叶子节点也必须挂 `toJSON()`，否则抛 `toJSON is not a function`。
+- **`meta` 必须用字面量声明**：`Object.assign` 会**整体覆盖** `meta` 的值。同一节点若既在字面量提供 `meta: {}`、又在后置赋值里设置 `meta: {...}`，后者会静默抹掉前者。同理，`Object.assign` 对 `toJSON` 这类方法也是整体替换，不会保留原型方法。
+- **不含 volatile 的子树的表单会被整棵剪除**，但**层级节点自身不得标记 volatile** —— 一旦标记，`volatileForm()` 会走 `plainSchema()` 跳过剪枝，层级也会变成可编辑控件。
+- **必须为「用户未填写」的字段也建立 volatile 引用**：`LoaderEntry._commitVolatile()` 首行是 `volatileEntries(fiber.config)`，引用集合为空会**立即返回**，导致整次表单保存被**静默丢弃**、界面毫无反应。这是最难定位的一类缺陷 —— 无报错、无日志。
+- **volatile 引用协议由 `Symbol.for('cosmokit.volatile.write')` 承载，不依赖模块实例**：因此无需引入 `@deepseek-ai/cosmokit` 依赖即可与官方实现互通（`isVolatile` / `volatileEntries` / `updateVolatile` 全部可用）。
+- **引用必须在透传给子插件前解引用**：子插件做的是 `typeof x === 'boolean'` 之类的原始值判断，收到 `{ get() {} }` 会全部落空、配置整体回落默认值。解引用要深入 `deepMerge` 与 `clonePlain`，否则句柄会悄悄混进配置树。
+- **`loader/volatile-update` 是 `emit` 而非 `waterfall`**：监听器**不得**声明第三个 `next` 参数，否则 `next` 会被误当作变更数据。
