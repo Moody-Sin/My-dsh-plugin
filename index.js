@@ -32,7 +32,10 @@ function readJsonFile(filePath) {
     const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
     const parsed = JSON.parse(raw);
     return isPlainObject(parsed) ? parsed : {};
-  } catch {
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(`[my-dsh-plugins] \u914D\u7F6E\u6587\u4EF6\u89E3\u6790\u5931\u8D25\uFF0C\u5DF2\u5FFD\u7565\u8BE5\u6587\u4EF6: ${filePath}`, error);
+    }
     return {};
   }
 }
@@ -137,21 +140,27 @@ function resolveProjectRoot() {
 async function apply(ctx, config) {
   const rootDir = resolveProjectRoot();
   const fileConfig = loadUmbrellaConfig(rootDir);
-  const mergedConfig = deepMerge(fileConfig, config || {});
+  const mergedConfig = deepMerge(config || {}, fileConfig);
   const scanned = scanPlugins(rootDir);
+  if (scanned.length === 0) {
+    console.warn(
+      `[my-dsh-plugins] \u672A\u5728\u6839\u76EE\u5F55 ${rootDir} \u4E0B\u626B\u63CF\u5230\u4EFB\u4F55 dsh-* \u5B50\u63D2\u4EF6\uFF0C\u8BF7\u68C0\u67E5\u662F\u5426\u5DF2\u5B89\u88C5\u5B50\u63D2\u4EF6\uFF0C\u6216\u9879\u76EE\u6839\u76EE\u5F55\u5B9A\u4F4D\u662F\u5426\u6709\u8BEF\u3002`
+    );
+    return;
+  }
   for (const plugin of scanned) {
     const conf = getPluginConfig(mergedConfig, plugin.pluginKey);
     if (!conf.enabled) continue;
     try {
       const mod = await import(plugin.entryUrl);
       const pluginDef = mod.default ?? mod;
-      if (ctx.registry) {
-        const exists = Array.from(ctx.registry.values?.() || []).some(
-          (r) => r.callback === pluginDef || pluginDef.name && r.name === pluginDef.name
+      if (ctx.registry?.has?.(pluginDef)) continue;
+      const fiber = await ctx.plugin(pluginDef, conf.config);
+      if (fiber?.state !== void 0 && fiber.state !== 2) {
+        console.warn(
+          `[my-dsh-plugins] \u5B50\u63D2\u4EF6 ${plugin.pluginKey} \u88C5\u8F7D\u540E\u672A\u8FDB\u5165 ACTIVE \u72B6\u6001\uFF08state=${fiber.state}\uFF09\uFF0C\u53EF\u80FD\u5728\u7B49\u5F85\u4F9D\u8D56\u6CE8\u5165\uFF0C\u63D2\u4EF6\u5C1A\u672A\u771F\u6B63\u751F\u6548\u3002`
         );
-        if (exists) continue;
       }
-      await ctx.plugin(pluginDef, conf.config);
     } catch (err) {
       console.warn(`[my-dsh-plugins] \u5B50\u63D2\u4EF6 ${plugin.pluginKey} \u521D\u59CB\u5316\u5931\u8D25:`, err);
     }

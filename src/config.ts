@@ -12,8 +12,6 @@ const LOCAL_CONFIG_FILENAME = 'plugins.config.local.json';
  * `plugins` 为各子插件配置切片集合，键名由子插件目录名剥离 `dsh-` 前缀推导。
  */
 export interface UmbrellaLoaderConfig {
-  /** 基础配置文件名，默认 `plugins.config.json` */
-  configFile?: string;
   /** 子插件配置切片：`{ [pluginKey]: { enabled?: boolean, ...业务配置 } }` */
   plugins?: Record<string, any>;
 }
@@ -50,7 +48,12 @@ export function deepMerge(target: any, source: any): any {
   return merged;
 }
 
-/** 读取 JSON 配置文件；文件缺失、不可读或内容非纯对象时统一返回空对象 */
+/**
+ * 读取 JSON 配置文件；文件缺失、不可读或内容非纯对象时统一返回空对象。
+ *
+ * 文件不存在（ENOENT）属正常情况，不告警；文件存在但解析失败则告警并带上绝对路径，
+ * 避免用户填写的配置被静默忽略（详见 LESSONS.md #6）。
+ */
 function readJsonFile(filePath: string): Record<string, any> {
   try {
     // Windows 下记事本 / PowerShell `Set-Content -Encoding utf8` 会写入 UTF-8 BOM，
@@ -58,7 +61,11 @@ function readJsonFile(filePath: string): Record<string, any> {
     const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
     const parsed: unknown = JSON.parse(raw);
     return isPlainObject(parsed) ? parsed : {};
-  } catch {
+  } catch (error) {
+    // readFileSync 抛错说明文件不存在或不可读，属正常降级路径，无需打断用户。
+    if ((error as any)?.code !== 'ENOENT') {
+      console.warn(`[my-dsh-plugins] 配置文件解析失败，已忽略该文件: ${filePath}`, error);
+    }
     return {};
   }
 }
@@ -102,13 +109,17 @@ export function getPluginConfig(
  * 根插件配置校验器（Standard Schema v1，同步实现）。
  *
  * Cordis v4 在插件启动前同步调用 `Config['~standard'].validate(config)` 并读取
- * `result.value`，因此这里严禁返回 Promise，详见 Lessons Learned #3。
+ * `result.value`，因此这里严禁返回 Promise，详见 LESSONS.md #3。
+ *
+ * 返回类型显式声明 `issues`：Cordis 会同步读取 `result.issues`（Standard Schema v1 契约，
+ * 详见 LESSONS.md #3）。本校验器是宽松降级实现，永远返回合法的 `{ value }`、从不产生
+ * issues，故用 `undefined` 精确表达，同时保持 `value` 必填以不削弱调用方类型安全。
  */
 export const Config = {
   '~standard': {
     version: 1,
     vendor: 'schemastery',
-    validate(value: unknown): { value: UmbrellaLoaderConfig } {
+    validate(value: unknown): { value: UmbrellaLoaderConfig; issues?: undefined } {
       return { value: isPlainObject(value) ? (value as UmbrellaLoaderConfig) : {} };
     },
   },
