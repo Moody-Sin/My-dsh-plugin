@@ -52,7 +52,7 @@ export function deepMerge(target: any, source: any): any {
  * 读取 JSON 配置文件；文件缺失、不可读或内容非纯对象时统一返回空对象。
  *
  * 文件不存在（ENOENT）属正常情况，不告警；文件存在但解析失败则告警并带上绝对路径，
- * 避免用户填写的配置被静默忽略（详见 LESSONS.md #6）。
+ * 避免用户填写的配置被静默忽略。
  */
 function readJsonFile(filePath: string): Record<string, any> {
   try {
@@ -109,11 +109,12 @@ export function getPluginConfig(
  * 根插件配置校验器（Standard Schema v1，同步实现）。
  *
  * Cordis v4 在插件启动前同步调用 `Config['~standard'].validate(config)` 并读取
- * `result.value`，因此这里严禁返回 Promise，详见 LESSONS.md #3。
+ * `result.value`，因此这里严禁返回 Promise，否则 Cordis 会直接抛
+ * `Async config validation is not supported`。
  *
- * 返回类型显式声明 `issues`：Cordis 会同步读取 `result.issues`（Standard Schema v1 契约，
- * 详见 LESSONS.md #3）。本校验器是宽松降级实现，永远返回合法的 `{ value }`、从不产生
- * issues，故用 `undefined` 精确表达，同时保持 `value` 必填以不削弱调用方类型安全。
+ * 返回类型显式声明 `issues`：Cordis 会同步读取 `result.issues`（Standard Schema v1 契约）。
+ * 本校验器是宽松降级实现，永远返回合法的 `{ value }`、从不产生 issues，故用 `undefined`
+ * 精确表达，同时保持 `value` 必填以不削弱调用方类型安全。
  */
 export const Config = {
   '~standard': {
