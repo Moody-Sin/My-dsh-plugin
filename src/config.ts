@@ -2,9 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /** 公开基础配置文件名（随 Git 提交，存放通用默认值） */
-const BASE_CONFIG_FILENAME = 'plugins.config.json';
+export const BASE_CONFIG_FILENAME = 'plugins.config.json';
 /** 本地私有覆盖文件名（已加入 .gitignore，存放密钥等敏感覆盖值） */
-const LOCAL_CONFIG_FILENAME = 'plugins.config.local.json';
+export const LOCAL_CONFIG_FILENAME = 'plugins.config.local.json';
+
+/**
+ * 环境变量占位符：同时支持 `${VAR_NAME}` 与 `${env:VAR_NAME}` 两种写法。
+ *
+ * 变量名限定为 `[A-Za-z_][A-Za-z0-9_]*`，避免把 `${a.b}` 这类非环境变量写法误伤。
+ */
+const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 /**
  * 聚合加载器自身的配置模型。
@@ -49,6 +56,22 @@ export function deepMerge(target: any, source: any): any {
 }
 
 /**
+ * 插值配置文本中的环境变量占位符（`${VAR_NAME}` 与 `${env:VAR_NAME}`）。
+ *
+ * - 变量已定义时替换为对应值（空串也是合法取值，照常替换）；
+ * - 变量未定义时**原样保留占位符**，便于用户直观发现漏配的变量，
+ *   而不是被静默替换成空串导致凭据以空值下发。
+ *
+ * 替换值经函数返回，因此变量内容中的 `$&` / `$1` 不会被当作替换模式二次解释。
+ */
+export function interpolateEnvVariables(raw: string): string {
+  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string) => {
+    const value = process.env[varName];
+    return value === undefined ? placeholder : value;
+  });
+}
+
+/**
  * 读取 JSON 配置文件；文件缺失、不可读或内容非纯对象时统一返回空对象。
  *
  * 文件不存在（ENOENT）属正常情况，不告警；文件存在但解析失败则告警并带上绝对路径，
@@ -59,7 +82,9 @@ function readJsonFile(filePath: string): Record<string, any> {
     // Windows 下记事本 / PowerShell `Set-Content -Encoding utf8` 会写入 UTF-8 BOM，
     // 而 JSON.parse 无法识别 BOM，必须先剥离，否则配置会被静默判定为损坏。
     const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-    const parsed: unknown = JSON.parse(raw);
+    // 先剥离 BOM 再插值，最后才交给 JSON.parse：插值结果中的引号 / 反斜杠由 JSON 语法自行校验，
+    // 若把插值提前到 BOM 剥离之前，BOM 会挡住首字符 `$` 的匹配。
+    const parsed: unknown = JSON.parse(interpolateEnvVariables(raw));
     return isPlainObject(parsed) ? parsed : {};
   } catch (error) {
     // readFileSync 抛错说明文件不存在或不可读，属正常降级路径，无需打断用户。

@@ -1,16 +1,20 @@
 {
   "name": "@local/my-dsh-plugins",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Umbrella bundle loader and configuration manager for local DSH plugins",
   "private": true,
   "type": "module",
   "main": "./index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json"
   ],
   "dsh": {
     "bundle": {
@@ -21,6 +25,7 @@
     "dsh-*"
   ],
   "scripts": {
+    "clean": "node -e \"fs.rmSync('index.js',{force:true}); fs.rmSync('dsh-notifier/index.js',{force:true})\"",
     "build:self": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
     "build:plugins": "npm run build --workspaces",
     "build": "npm run build:plugins && npm run build:self",

@@ -4,6 +4,41 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-12
+
+### 新增 (Added)
+- **配置热重载**（`src/index.ts`）：`fs.watch` 监听仓库根目录，编辑 `plugins.config.json` / `plugins.config.local.json` 后**无需重启 DSH** 即可生效。
+  - 启用 → 禁用：销毁已挂载 fiber 并移出登记表；禁用 → 启用：动态补挂；持续启用：`fiber.update()` **原地热更新**，不销毁重建（避免监听器抖动与通知丢失）。
+  - 300ms 防抖合并编辑器连续写入，并按文件名白名单过滤无关变更。
+  - 监听**根目录本身**而非具体文件：文件尚不存在时监听目标会失效，而「新建 `plugins.config.local.json`」恰是最常见的本地覆盖场景。
+  - 监听器与定时器均 `unref()`，不阻止宿主进程退出；`ctx.on('dispose')` 注销 watcher，杜绝句柄与定时器长期驻留。
+- **环境变量插值**（`src/config.ts`）：配置值支持 `${VAR_NAME}` 与 `${env:VAR_NAME}` 占位符，由 `process.env` 在读取时替换，**机密凭据无需落盘**。变量未定义时**原样保留占位符**，便于直观发现漏配，而非被静默替换为空串导致凭据以空值下发。新增导出 `interpolateEnvVariables()` 与两个配置文件名常量。
+- **未知插件配置告警**（`src/index.ts`）：配置中存在无法对应到任何已扫描子插件的键时（目录改名、拼写错误、未安装），逐个输出中文告警并列出当前已检测到的子插件名，杜绝配置被静默忽略。
+- **Cordis 原生 Logger 对接**（`src/index.ts`）：优先使用 `ctx.logger('my-dsh-plugins')`，并按级别降级到 `console`；所有告警与信息统一走 logger。
+- **DSH 官方 Bundle 资源清单**：新增根 [`icon.svg`](./icon.svg)（总线 / 插件主题，< 50KB，无脚本、无外链）与 [`locale/zh.json`](./locale/zh.json)、[`locale/en.json`](./locale/en.json)（`meta.title` / `meta.description`，中英文键集合一致）。
+- **`clean` 脚本**（根 `package.json`）：清理根与子插件的 `index.js` 构建产物。
+
+### 变更 (Changed)
+- **根包版本提升至 `0.5.0`**（新增功能，遵循 SemVer 次版本号递增）；同步修正 `package-lock.json` 中滞后的 `0.3.0` 版本号。
+- 根 `package.json` 的 `exports` 增加 `"./icon"` 与 `"./locale/*.json"`，`files` 增加 `icon.svg` 与 `locale/*.json`，供 DSH 宿主读取图标与本地化文案。
+- `src/index.ts` 抽出 `mountPlugin()` 与 `importPluginDef()`，使首轮装载与热重载补挂共用同一路径，避免两条装载逻辑各自漂移。
+
+### 修复 (Fixed)
+- **根目录定位隐患**（`src/index.ts`）：原 `resolveProjectRoot()` 仅在「本文件所在目录 → 上级目录」两个候选中查找含 `package.json` 的目录，未命中即**回落 `process.cwd()`**。在 DSH 运行时 cwd 是用户的目标工程目录，一旦回落就会被误判为插件根，导致扫描与配置读写**污染用户工程**。现改为从 `import.meta.url` 所在目录起逐级**向上查找**直到文件系统根，命中条件为「`package.json` 的 `name === '@local/my-dsh-plugins'`」或「目录下存在 `plugins.config.json`」；全部未命中时抛出 `[my-dsh-plugins] 无法定位项目根目录，请确保从有效的仓库安装或运行`。
+- **目录符号链接被漏扫**（`src/scanner.ts`）：原判据 `entry.isDirectory()` 在部分 Node.js 与操作系统组合下对目录软链返回 `false` —— 已实测 Windows junction 为 `isSymbolicLink() === true` 且 `isDirectory() === false`，会导致 workspaces 软链出来的子插件**整片漏扫**。现改为 `entry.isDirectory() || (entry.isSymbolicLink() && statSync(...)?.isDirectory())`，并对悬空链接 / 无权限 / 竞态删除做异常保护（保守判为非目录）。
+- **禁用插件时 fiber 未被销毁**（`src/index.ts`）：热重载的禁用分支误写为 `forks.delete(key)?.dispose?.()` —— `Map.delete` 返回的是 **boolean** 而非被删的值，可选链在 `boolean` 上恒为 `undefined`，导致 `dispose()` **永远不会被调用**，被禁用的插件实例持续存活。已改为先 `get` 再 `delete` 后 `dispose`。
+- **`fs.watch` 的 `'error'` 事件会拖垮宿主**（`src/index.ts`）：根目录被删除 / 权限变更时 FSWatcher 会发出 `'error'`，EventEmitter 的未处理 `'error'` 会**直接抛错**。现已就地消化为中文告警。
+- **`ctx` Proxy 读取 logger 会抛错**（`src/index.ts`）：Cordis 的 `ctx` 是 Proxy，读取未声明 `inject` 的服务属性会直接抛错，`ctx.logger?.(...)` 的可选链挡不住该抛错。现已将取用包在 `try` 中并降级到控制台。
+
+### 测试 (Tests)
+- 根 Loader 测试由 **32 项扩充至 69 项**：
+  - 新增 [`tests/manifest.test.ts`](./tests/manifest.test.ts)（8 项）：校验根包元数据规范（包名与 Bundle Patch 稳定、`exports` / `files` 齐备、声明资源真实存在、`clean` 脚本、`icon.svg` 体积与安全性、`locale` 中英文键集合一致）。
+  - `config.test.ts` 新增 8 项环境变量插值用例（两种占位符写法、漏配保留、空串替换、非法写法不误伤、`$&` 不被二次解释、BOM 与双层合并下的插值、漏配不刷告警）。
+  - `scanner.test.ts` 新增 3 项目录软链用例（junction 可被扫描、悬空软链安全跳过、指向文件的软链不被误判）。
+  - `loader.test.ts` 新增 18 项（11 → 29）：`resolveProjectRoot()` 向上查找 / 双命中条件 / 找不到时抛错且 `apply` 直接上抛、未知插件告警、Cordis Logger 对接与 Proxy 抛错降级、热重载四分支（禁用销毁、启用补挂、持续启用热更新、无关变更不触发）、防抖合并、本地覆盖文件新建触发、dispose 注销 watcher、子插件重载异常隔离。
+- 测试夹具 `makeIsolatedRoot()` 同步补齐根标志（`package.json` 的 `name` 为 `@local/my-dsh-plugins`）—— `resolveProjectRoot()` 不再回落 cwd 后，缺少根标志的夹具会直接抛错；负向用例通过 `omitRootMarkers` 显式构造「找不到根」场景，并前置校验系统临时目录祖先链确实不含根标志，否则诚实 `t.skip()` 而非误报。
+- 当前根 Loader **69 项**测试全绿。
+
 ## [0.4.0] - 2026-10-12
 
 ### 新增 (Added)

@@ -81,6 +81,25 @@ function resolveEntryPath(dirPath: string): string | undefined {
 }
 
 /**
+ * 判定目录项是否为目录，并把目录符号链接（含 Windows junction）一并纳入。
+ *
+ * Node.js 在部分平台（典型为 Windows 上的 junction）对目录软链返回 `isDirectory() === false`
+ * 而 `isSymbolicLink() === true`，若只看 `isDirectory()` 会漏扫工作区软链出来的子插件。
+ * `statSync` 可能因悬空链接、权限不足或并发删除抛错，此处必须捕获异常并保守判定为「非目录」。
+ */
+function isDirectoryEntry(rootDir: string, entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+
+  try {
+    return fs.statSync(path.join(rootDir, entry.name), { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    // 悬空软链 / 无权限 / 竞态删除：跳过该目录项，绝不中断整体扫描。
+    return false;
+  }
+}
+
+/**
  * 扫描根目录下的所有 `dsh-*` 子插件目录。
  *
  * 忽略非 `dsh-` 前缀项、隐藏目录、保留目录与无有效入口的目录；
@@ -97,8 +116,8 @@ export function scanPlugins(rootDir: string): ScannedPlugin[] {
 
   const plugins: ScannedPlugin[] = [];
   for (const entry of entries) {
-    // 仅处理目录，且严格限定单层扫描，绝不递归进入 node_modules。
-    if (!entry.isDirectory()) continue;
+    // 仅处理目录（含目录软链），且严格限定单层扫描，绝不递归进入 node_modules。
+    if (!isDirectoryEntry(rootDir, entry)) continue;
     if (!entry.name.startsWith(PLUGIN_DIR_PREFIX)) continue;
 
     const dirPath = path.join(rootDir, entry.name);

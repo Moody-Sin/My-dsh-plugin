@@ -129,3 +129,91 @@ test('scanPlugins: package.json 损坏时跳过该目录并输出中文告警', 
     console.warn = originalWarn;
   }
 });
+
+// ── 目录符号链接（含 Windows junction）────────────────────────────────────
+
+/**
+ * 创建目录软链；平台不支持（无权限 / 需开发者模式）时返回 `false`，
+ * 由调用方诚实跳过而非误报失败。
+ *
+ * Windows 上 junction 无需管理员权限，因此优先使用；失败再退回 dir 类型。
+ */
+function trySymlinkDir(targetPath: string, linkPath: string): boolean {
+  for (const type of ['junction', 'dir'] as const) {
+    try {
+      fs.symlinkSync(targetPath, linkPath, type);
+      return true;
+    } catch {
+      // 换下一种类型重试
+    }
+  }
+  return false;
+}
+
+test('scanPlugins: 目录软链（含 Windows junction）同样能被扫描到', (t) => {
+  // 真实插件放在仓库外层的普通目录，通过软链接挂进根目录 —— 正是 workspaces 软链场景
+  const realDir = fs.mkdtempSync(path.join(os.tmpdir(), 'umbrella-symlink-target-'));
+  fs.writeFileSync(path.join(realDir, 'index.js'), 'export default {};', 'utf8');
+
+  const linkPath = path.join(rootDir, 'dsh-linked');
+  if (!trySymlinkDir(realDir, linkPath)) {
+    fs.rmSync(realDir, { recursive: true, force: true });
+    t.skip('当前环境不允许创建目录软链（需开发者模式或管理员权限）');
+    return;
+  }
+  t.after(() => {
+    fs.rmSync(linkPath, { force: true });
+    fs.rmSync(realDir, { recursive: true, force: true });
+  });
+
+  const scanned = scanPlugins(rootDir);
+  const linked = scanned.find((plugin) => plugin.dirName === 'dsh-linked');
+
+  assert.ok(linked, '目录软链必须被识别为子插件目录，否则 Windows junction 场景会整片漏扫');
+  assert.equal(linked.pluginKey, 'linked');
+  // dirPath / entryPath 保持软链路径形态，与 readdir 得到的目录项一致
+  assert.equal(linked.dirPath, linkPath);
+  assert.equal(linked.entryPath, path.join(linkPath, 'index.js'));
+  assert.ok(fs.existsSync(linked.entryPath), '解析出的入口必须真实可读');
+  // 排序仍须稳定
+  assert.deepEqual(
+    scanned.map((plugin) => plugin.dirName),
+    [...MATCHED_DIRS, 'dsh-linked'].sort((a, b) => a.localeCompare(b)),
+  );
+});
+
+test('scanPlugins: 悬空软链被安全跳过，不中断整体扫描', (t) => {
+  const linkPath = path.join(rootDir, 'dsh-dangling');
+  if (!trySymlinkDir(path.join(os.tmpdir(), 'umbrella-not-exist-target'), linkPath)) {
+    t.skip('当前环境不允许创建目录软链');
+    return;
+  }
+  t.after(() => fs.rmSync(linkPath, { force: true }));
+
+  // statSync 对悬空链接会抛 ENOENT，必须被捕获并保守判为非目录
+  const dirNames = scanPlugins(rootDir).map((plugin) => plugin.dirName);
+
+  assert.deepEqual(dirNames, MATCHED_DIRS, '悬空软链必须被跳过，且不得影响其余目录');
+});
+
+test('scanPlugins: 指向文件的软链不被误判为插件目录', (t) => {
+  const targetFile = path.join(rootDir, 'plain-entry.js');
+  fs.writeFileSync(targetFile, 'export default {};', 'utf8');
+
+  const linkPath = path.join(rootDir, 'dsh-file-link');
+  try {
+    fs.symlinkSync(targetFile, linkPath, 'file');
+  } catch {
+    fs.rmSync(targetFile, { force: true });
+    t.skip('当前环境不允许创建文件软链');
+    return;
+  }
+  t.after(() => {
+    fs.rmSync(linkPath, { force: true });
+    fs.rmSync(targetFile, { force: true });
+  });
+
+  const dirNames = scanPlugins(rootDir).map((plugin) => plugin.dirName);
+
+  assert.deepEqual(dirNames, MATCHED_DIRS, '指向文件的软链不是目录，严禁被当作子插件');
+});

@@ -9,6 +9,7 @@ import {
   Config,
   deepMerge,
   getPluginConfig,
+  interpolateEnvVariables,
   loadUmbrellaConfig,
 } from '../src/config.ts';
 
@@ -256,4 +257,169 @@ test('Config: validate 同步返回 { value } 且兼容非法输入', () => {
     const fallback = Config['~standard'].validate(invalid);
     assert.deepEqual(fallback.value, {}, `非法输入 ${String(invalid)} 必须降级为空对象`);
   }
+});
+
+// ── 环境变量插值 ──────────────────────────────────────────────────────────
+
+/**
+ * 在用例内临时设置环境变量，结束后无论成败都还原 / 删除，杜绝跨用例污染。
+ */
+function withEnv<T>(vars: Record<string, string>, fn: () => T): T {
+  const originals = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(vars)) {
+    originals.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of originals) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test('interpolateEnvVariables: 支持 ${VAR} 与 ${env:VAR} 两种占位符写法', () => {
+  withEnv({ UMBRELLA_TEST_TOKEN: 's3cr3t', UMBRELLA_TEST_URL: 'https://example.com' }, () => {
+    assert.equal(
+      interpolateEnvVariables('${UMBRELLA_TEST_TOKEN}'),
+      's3cr3t',
+      '${VAR} 写法必须被替换',
+    );
+    assert.equal(
+      interpolateEnvVariables('${env:UMBRELLA_TEST_TOKEN}'),
+      's3cr3t',
+      '${env:VAR} 写法必须被替换',
+    );
+    assert.equal(
+      interpolateEnvVariables('url=${UMBRELLA_TEST_URL}/hook?token=${env:UMBRELLA_TEST_TOKEN}'),
+      'url=https://example.com/hook?token=s3cr3t',
+      '同一字符串内的多个占位符必须全部替换',
+    );
+  });
+});
+
+test('interpolateEnvVariables: 变量不存在时原样保留占位符', () => {
+  delete process.env.UMBRELLA_TEST_ABSENT;
+
+  assert.equal(
+    interpolateEnvVariables('${UMBRELLA_TEST_ABSENT}'),
+    '${UMBRELLA_TEST_ABSENT}',
+    '漏配的变量必须原样保留，便于用户直观发现，而不是被静默替换为空串',
+  );
+  assert.equal(
+    interpolateEnvVariables('${env:UMBRELLA_TEST_ABSENT}'),
+    '${env:UMBRELLA_TEST_ABSENT}',
+    '带 env: 前缀的漏配变量同样必须原样保留',
+  );
+});
+
+test('interpolateEnvVariables: 变量为空串时按存在处理并替换为空', () => {
+  withEnv({ UMBRELLA_TEST_EMPTY: '' }, () => {
+    assert.equal(
+      interpolateEnvVariables('a${UMBRELLA_TEST_EMPTY}b'),
+      'ab',
+      '空串是合法取值，必须替换而非保留占位符',
+    );
+  });
+});
+
+test('interpolateEnvVariables: 非环境变量写法与非法变量名一律不动', () => {
+  withEnv({ UMBRELLA_TEST_TOKEN: 's3cr3t' }, () => {
+    for (const raw of [
+      '${a.b}',
+      '${1INVALID}',
+      '${}',
+      '$UMBRELLA_TEST_TOKEN',
+      '{UMBRELLA_TEST_TOKEN}',
+      '${UMBRELLA-TEST}',
+      '普通文本',
+    ]) {
+      assert.equal(interpolateEnvVariables(raw), raw, `${raw} 不是合法占位符，严禁被改写`);
+    }
+  });
+});
+
+test('interpolateEnvVariables: 替换值中的 $ 字符不被当作替换模式二次解释', () => {
+  withEnv({ UMBRELLA_TEST_DOLLAR: 'a$&b$1c' }, () => {
+    assert.equal(
+      interpolateEnvVariables('${UMBRELLA_TEST_DOLLAR}'),
+      'a$&b$1c',
+      '$& 与 $1 必须原样输出，不得被 String.replace 的模式语法吞掉',
+    );
+  });
+});
+
+test('loadUmbrellaConfig: 配置文件中的环境变量占位符被插值（含 BOM 与嵌套字段）', (t) => {
+  const dir = makeTempDir();
+  t.after(() => cleanup(dir));
+
+  withEnv(
+    { UMBRELLA_TEST_WEBHOOK: 'https://hook.example.com/abc', UMBRELLA_TEST_SECRET: 'top-secret' },
+    () => {
+      // 同时覆盖 BOM 前缀与 ${env:VAR} 写法：插值必须发生在 BOM 剥离之后、JSON.parse 之前
+      writeRaw(
+        dir,
+        BASE_FILENAME,
+        '\uFEFF' +
+          JSON.stringify({
+            plugins: {
+              notifier: {
+                enabled: true,
+                webhook: { url: '${UMBRELLA_TEST_WEBHOOK}', secret: '${env:UMBRELLA_TEST_SECRET}' },
+              },
+            },
+          }),
+      );
+
+      const config = loadUmbrellaConfig(dir);
+      const webhook = (config.plugins ?? {}).notifier.webhook;
+
+      assert.equal(webhook.url, 'https://hook.example.com/abc', 'BOM 之后的占位符同样必须被插值');
+      assert.equal(webhook.secret, 'top-secret', '敏感凭据必须能由环境变量注入');
+    },
+  );
+});
+
+test('loadUmbrellaConfig: 本地覆盖层同样支持环境变量插值且优先级不变', (t) => {
+  const dir = makeTempDir();
+  t.after(() => cleanup(dir));
+
+  writeJson(dir, BASE_FILENAME, {
+    plugins: { notifier: { webhook: { secret: 'base-secret', url: 'https://base.example.com' } } },
+  });
+
+  withEnv({ UMBRELLA_TEST_LOCAL_SECRET: 'local-from-env' }, () => {
+    writeRaw(
+      dir,
+      LOCAL_FILENAME,
+      JSON.stringify({ plugins: { notifier: { webhook: { secret: '${UMBRELLA_TEST_LOCAL_SECRET}' } } } }),
+    );
+
+    const webhook = (loadUmbrellaConfig(dir).plugins ?? {}).notifier.webhook;
+
+    assert.equal(webhook.secret, 'local-from-env', '本地层的占位符必须被插值');
+    assert.equal(webhook.url, 'https://base.example.com', '插值不得破坏双层合并语义');
+  });
+});
+
+test('loadUmbrellaConfig: 未配置的环境变量不会让整份配置解析失败', (t) => {
+  const dir = makeTempDir();
+  t.after(() => cleanup(dir));
+
+  delete process.env.UMBRELLA_TEST_ABSENT;
+  writeRaw(
+    dir,
+    BASE_FILENAME,
+    JSON.stringify({ plugins: { notifier: { enabled: true, token: '${UMBRELLA_TEST_ABSENT}' } } }),
+  );
+
+  const warnings = captureWarnings(() => {
+    const notifier = (loadUmbrellaConfig(dir).plugins ?? {}).notifier;
+    assert.equal(notifier.token, '${UMBRELLA_TEST_ABSENT}', '未配置的占位符必须原样保留');
+    assert.equal(notifier.enabled, true, '同一文件中的其它字段必须照常解析');
+  });
+
+  assert.deepEqual(warnings, [], '未配置的环境变量不是错误，不得刷告警');
 });
