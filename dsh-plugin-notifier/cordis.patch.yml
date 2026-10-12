@@ -1,0 +1,20 @@
+# DeepSeek Harness Notification Plugin Layer
+- insert:
+    - id: notifier
+      name: '@local/dsh-plugin-notifier'
+      config:
+        desktop:
+          enabled: true
+          minDurationSeconds: 5
+        sound:
+          enabled: true
+        events:
+          onTurnEnd: true
+          onQuestion: true
+          onApproval: true
+          onError: true
+        webhook:
+          enabled: false
+          provider: 'generic'
+          url: ''
+          secret: ''

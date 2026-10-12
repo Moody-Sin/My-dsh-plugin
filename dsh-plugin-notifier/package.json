@@ -1,0 +1,27 @@
+{
+  "name": "@local/dsh-plugin-notifier",
+  "version": "0.1.0",
+  "description": "Cross-platform desktop and webhook notifications for DeepSeek Harness",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5-alpha.1"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Desktop & Webhook Notifications",
+    "description": "Cross-platform desktop notifications, audio cues, and Feishu/DingTalk/WeCom/Bark/Generic webhooks on task completion, questions, approvals, and errors."
+  }
+}
