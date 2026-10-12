@@ -287,3 +287,20 @@ test('plugin: still dispatches notifications when sessionTitle service is absent
   assert.equal(calls.turnEnd.sessionTitle, undefined, '标题缺失时仅无标题行，不影响其余字段');
   assert.equal(calls.turnEnd.turn, 1, '轮次等主体信息必须照常携带');
 });
+
+test('plugin: 新增 locale 与 Webhook 渠道配置可通过入口 Schema 解析', () => {
+  const parsed = Config({
+    locale: 'en',
+    webhook: {
+      enabled: true,
+      provider: 'telegram',
+      url: 'https://api.telegram.org/botTOKEN/sendMessage',
+      secret: '42',
+    },
+  });
+
+  assert.equal(parsed.locale, 'en');
+  assert.equal(parsed.webhook.provider, 'telegram');
+  assert.equal(parsed.webhook.secret, '42');
+});
+

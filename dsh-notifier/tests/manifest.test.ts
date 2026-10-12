@@ -41,7 +41,29 @@ test('manifest: locale zh and en files have valid meta titles and descriptions',
   assert.ok(zh.meta?.description, 'zh meta.description must exist');
   assert.ok(en.meta?.title, 'en meta.title must exist');
   assert.ok(en.meta?.description, 'en meta.description must exist');
+
+  // 通知文案词典必须与 src/utils/i18n.ts 的 MessageKey 一一对应，
+  // 否则界面元数据与运行时文案会各自漂移。
+  const expectedKeys = [
+    'taskCompleted', 'taskEnded', 'waitingForResponse', 'approvalRequested', 'taskError',
+    'session', 'turn', 'duration', 'status', 'tool', 'reason', 'error', 'unknown',
+  ];
+  for (const key of expectedKeys) {
+    assert.equal(typeof zh.notifications[key], 'string', `zh.notifications.${key} 必须存在`);
+    assert.equal(typeof en.notifications[key], 'string', `en.notifications.${key} 必须存在`);
+  }
+  assert.equal(zh.notifications.taskCompleted, 'DeepSeek Harness - 任务已完成');
+  assert.equal(en.notifications.taskCompleted, 'DeepSeek Harness - Task Completed');
 });
+
+test('manifest: 插件版本与 CHANGELOG 保持同步', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
+  const changelog = fs.readFileSync(path.join(pkgDir, 'CHANGELOG.md'), 'utf-8');
+
+  assert.equal(pkg.version, '0.3.0');
+  assert.ok(changelog.includes(`## [${pkg.version}]`), 'CHANGELOG 必须包含当前版本条目');
+});
+
 
 test('manifest: icon.svg exists and is valid svg under 256KB', () => {
   const iconPath = path.join(pkgDir, 'icon.svg');

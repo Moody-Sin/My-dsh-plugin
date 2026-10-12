@@ -1,3 +1,5 @@
+import type { LocaleSetting } from './utils/i18n.ts';
+
 export interface DesktopConfig {
   enabled: boolean;
   /**
@@ -22,7 +24,7 @@ export interface EventsConfig {
   minDurationSeconds?: number;
 }
 
-export type WebhookProvider = 'feishu' | 'dingtalk' | 'wecom' | 'bark' | 'generic';
+export type WebhookProvider = 'feishu' | 'dingtalk' | 'wecom' | 'bark' | 'telegram' | 'discord' | 'generic';
 
 export interface WebhookConfig {
   enabled: boolean;
@@ -32,13 +34,22 @@ export interface WebhookConfig {
 }
 
 export interface NotifierConfig {
+  /**
+   * 通知文案语言：`auto` 按环境变量判断，或强制 `zh`/`en`；默认 `auto`。
+   * 该字段可省略，`resolveConfig()` 保证返回对象中必定存在有效值。
+   */
+  locale?: LocaleSetting;
   desktop: DesktopConfig;
   sound: SoundConfig;
   events: EventsConfig;
   webhook: WebhookConfig;
 }
 
+/** 默认语言设置：`auto` 表示按运行环境自动判断中英文。 */
+const DEFAULT_LOCALE: LocaleSetting = 'auto';
+
 export const DEFAULT_CONFIG: NotifierConfig = {
+  locale: DEFAULT_LOCALE,
   desktop: {
     enabled: true,
     // 保留以保持完全向下兼容，实际过滤阈值以 events.minDurationSeconds 优先
@@ -62,7 +73,17 @@ export const DEFAULT_CONFIG: NotifierConfig = {
   },
 };
 
-const VALID_PROVIDERS = new Set<WebhookProvider>(['feishu', 'dingtalk', 'wecom', 'bark', 'generic']);
+const VALID_PROVIDERS = new Set<WebhookProvider>([
+  'feishu',
+  'dingtalk',
+  'wecom',
+  'bark',
+  'telegram',
+  'discord',
+  'generic',
+]);
+
+const VALID_LOCALES = new Set<LocaleSetting>(['auto', 'zh', 'en']);
 
 /** 将候选值规整为非负整数秒数，非法输入返回 undefined。 */
 function normalizeDurationSeconds(value: unknown): number | undefined {
@@ -71,9 +92,17 @@ function normalizeDurationSeconds(value: unknown): number | undefined {
     : undefined;
 }
 
+/** 校验语言配置，非法值回落 `auto`。 */
+function normalizeLocale(value: unknown): LocaleSetting {
+  return typeof value === 'string' && VALID_LOCALES.has(value as LocaleSetting)
+    ? (value as LocaleSetting)
+    : DEFAULT_LOCALE;
+}
+
 export function resolveConfig(candidate?: unknown): NotifierConfig {
   if (candidate === null || typeof candidate !== 'object') {
     return {
+      locale: DEFAULT_LOCALE,
       desktop: { ...DEFAULT_CONFIG.desktop },
       sound: { ...DEFAULT_CONFIG.sound },
       events: { ...DEFAULT_CONFIG.events },
@@ -98,6 +127,7 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
     : DEFAULT_CONFIG.webhook.provider;
 
   return {
+    locale: normalizeLocale(raw.locale),
     desktop: {
       enabled: typeof desktopRaw.enabled === 'boolean' ? desktopRaw.enabled : DEFAULT_CONFIG.desktop.enabled,
       minDurationSeconds: desktopMin ?? minDuration,
@@ -129,6 +159,11 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
  * 否则会抛出 `Cannot read properties of undefined (reading 'validate')`。
  */
 const SCHEMA_DICT = {
+  locale: {
+    type: 'string',
+    description: '通知文案语言：auto（按 DSH_LOCALE/LANG/LC_ALL 自动判断）| zh | en，默认 auto',
+    meta: {},
+  },
   desktop: {
     type: 'object',
     description: '桌面通知渠道配置（minDurationSeconds 已废弃，仅作向后兼容回退）',
@@ -142,7 +177,7 @@ const SCHEMA_DICT = {
   },
   sound: {
     type: 'object',
-    description: '系统提示音配置',
+    description: '系统提示音配置（Windows 下由桌面 Toast 内联播放，不额外启动子进程）',
     meta: {},
     dict: {
       enabled: { type: 'boolean', description: '是否在通知时播放系统提示音', meta: {} },
@@ -170,9 +205,17 @@ const SCHEMA_DICT = {
     meta: {},
     dict: {
       enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送', meta: {} },
-      provider: { type: 'string', description: '渠道类型：feishu | dingtalk | wecom | bark | generic', meta: {} },
+      provider: {
+        type: 'string',
+        description: '渠道类型：feishu | dingtalk | wecom | bark | telegram | discord | generic',
+        meta: {},
+      },
       url: { type: 'string', description: 'Webhook 机器人地址', meta: {} },
-      secret: { type: 'string', description: '签名密钥（可选）', meta: {} },
+      secret: {
+        type: 'string',
+        description: '签名密钥（可选）；telegram 渠道下作为 chat_id',
+        meta: {},
+      },
     },
   },
 };

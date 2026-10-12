@@ -375,3 +375,173 @@ test('channels: bark payload carries console url and badge for click-through', a
   parsed = JSON.parse(barkBody);
   assert.equal(parsed.url, 'http://127.0.0.1:3080/sessions/abc', 'metadata.url 可覆盖默认地址');
 });
+
+test('channels: Windows Toast 按配置内联音效并保持静音兼容', async () => {
+  const xmlPayloads: string[] = [];
+  const mockExec = async (_cmd: string, args: string[]) => {
+    const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+    const xmlBase64 = script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)?.[1];
+    assert.ok(xmlBase64, '脚本必须通过 Base64 安全传递 XML');
+    xmlPayloads.push(Buffer.from(xmlBase64, 'base64').toString('utf8'));
+    return { stdout: '', stderr: '' };
+  };
+
+  await sendDesktopNotification('提醒', '请处理', {
+    platform: 'win32', execFn: mockExec, soundEnabled: true, soundKind: 'alert',
+  });
+  await sendDesktopNotification('完成', '已完成', {
+    platform: 'win32', execFn: mockExec, soundEnabled: true, soundKind: 'success',
+  });
+  await sendDesktopNotification('静音', '兼容旧行为', {
+    platform: 'win32', execFn: mockExec, soundEnabled: false,
+  });
+
+  assert.match(xmlPayloads[0], /<audio src="ms-winsoundevent:Notification\.Reminder"\/>/);
+  assert.match(xmlPayloads[1], /<audio src="ms-winsoundevent:Notification\.Default"\/>/);
+  assert.match(xmlPayloads[2], /<audio silent="true"\/>/);
+});
+
+test('channels: Linux 告警通知传递 critical 紧急度和图标', async () => {
+  const calls: { cmd: string; args: string[] }[] = [];
+  await sendDesktopNotification('告警', '磁盘空间不足', {
+    platform: 'linux',
+    kind: 'warning',
+    iconPath: '/tmp/dsh-notifier.png',
+    execFn: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.equal(calls[0].cmd, 'notify-send');
+  assert.deepEqual(calls[0].args, [
+    '-u', 'critical', '-i', '/tmp/dsh-notifier.png', '告警', '磁盘空间不足',
+  ]);
+});
+
+test('channels: Linux 普通通知不追加紧急度与图标参数', async () => {
+  const calls: { cmd: string; args: string[] }[] = [];
+  await sendDesktopNotification('完成', '一切正常', {
+    platform: 'linux',
+    kind: 'success',
+    execFn: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.deepEqual(calls[0].args, ['完成', '一切正常']);
+});
+
+test('channels: macOS 通知把会话名放入 subtitle', async () => {
+  let args: string[] = [];
+  await sendDesktopNotification('任务完成', '轮次: #3 · 耗时: 5秒', {
+    platform: 'darwin',
+    subtitle: '构建发布包',
+    execFn: async (_cmd, receivedArgs) => {
+      args = receivedArgs;
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.ok(args.some((arg) => arg.includes('subtitle')), 'AppleScript 必须声明 subtitle');
+  assert.ok(args.includes('构建发布包'), '会话名必须作为 subtitle 参数传入');
+  assert.ok(args.includes('轮次: #3 · 耗时: 5秒'), '轮次与耗时留在正文');
+});
+
+test('channels: macOS 无副标题时脚本降级为双参数调用', async () => {
+  const calls: { cmd: string; args: string[] }[] = [];
+  const ok = await sendDesktopNotification('标题', '正文', {
+    platform: 'darwin',
+    execFn: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.equal(ok, true);
+  assert.equal(calls[0].cmd, 'osascript');
+  // 无副标题时不得多传第三个位置参数，否则 AppleScript 会把未使用的 argv 当作 subtitle。
+  assert.deepEqual(calls[0].args.slice(-3), ['--', '正文', '标题']);
+});
+
+test('channels: Telegram 使用 Markdown 正文并把 secret 作为 chat_id', async () => {
+  let requestedUrl = '';
+  let requestedBody = '';
+  const ok = await sendWebhookNotification(
+    {
+      enabled: true,
+      provider: 'telegram',
+      url: 'https://api.telegram.org/botTOKEN/sendMessage',
+      secret: '-100123456',
+    },
+    { title: 'Task Done', message: 'All steps complete', event: 'turn/end', kind: 'success' },
+    {
+      fetchFn: async (url, init) => {
+        requestedUrl = String(url);
+        requestedBody = String(init?.body ?? '');
+        return new Response('{}', { status: 200 });
+      },
+    }
+  );
+
+  assert.equal(ok, true);
+  assert.equal(requestedUrl, 'https://api.telegram.org/botTOKEN/sendMessage');
+  assert.deepEqual(JSON.parse(requestedBody), {
+    chat_id: '-100123456',
+    text: '*Task Done*\n\nAll steps complete',
+    parse_mode: 'Markdown',
+  });
+});
+
+test('channels: Telegram URL 已带 chat_id 时不使用 secret 覆盖', async () => {
+  let requestedBody = '';
+  await sendWebhookNotification(
+    {
+      enabled: true,
+      provider: 'telegram',
+      url: 'https://api.telegram.org/botTOKEN/sendMessage?chat_id=42',
+      secret: '99',
+    },
+    { title: 'Title', message: 'Message', event: 'turn/end' },
+    {
+      fetchFn: async (_url, init) => {
+        requestedBody = String(init?.body ?? '');
+        return new Response('{}', { status: 200 });
+      },
+    }
+  );
+
+  assert.equal(JSON.parse(requestedBody).chat_id, undefined);
+});
+
+test('channels: Discord 发送带等级颜色与时间戳的 Rich Embed', async () => {
+  const expectedColors = {
+    error: 0xff0000,
+    warning: 0xffa500,
+    success: 0x00ff00,
+    info: 0x3498db,
+  } as const;
+
+  for (const [kind, color] of Object.entries(expectedColors)) {
+    let body = '';
+    const ok = await sendWebhookNotification(
+      { enabled: true, provider: 'discord', url: 'https://discord.com/api/webhooks/id/token' },
+      { title: 'DSH', message: '通知正文', event: 'custom', kind: kind as keyof typeof expectedColors },
+      {
+        fetchFn: async (_url, init) => {
+          body = String(init?.body ?? '');
+          return new Response('{}', { status: 200 });
+        },
+      }
+    );
+
+    assert.equal(ok, true);
+    const embed = JSON.parse(body).embeds[0];
+    assert.equal(embed.title, 'DSH');
+    assert.equal(embed.description, '通知正文');
+    assert.equal(embed.color, color);
+    assert.ok(!Number.isNaN(Date.parse(embed.timestamp)), '时间戳必须是 ISO 日期');
+  }
+});
+

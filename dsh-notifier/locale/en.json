@@ -1,6 +1,21 @@
 {
   "meta": {
     "title": "Desktop & Webhook Notifications",
-    "description": "Cross-platform desktop notifications, audio cues, and Feishu/DingTalk/WeCom/Bark/Generic webhooks on task completion, questions, approvals, and errors."
+    "description": "Cross-platform desktop popups, audio cues, and Feishu/DingTalk/WeCom/Bark/Telegram/Discord/Generic webhooks on task completion, questions, approvals, and errors."
+  },
+  "notifications": {
+    "taskCompleted": "DeepSeek Harness - Task Completed",
+    "taskEnded": "DeepSeek Harness - Task Ended",
+    "waitingForResponse": "DeepSeek Harness - Waiting for Response",
+    "approvalRequested": "DeepSeek Harness - Approval Requested",
+    "taskError": "DeepSeek Harness - Task Error",
+    "session": "Session",
+    "turn": "Turn",
+    "duration": "Duration",
+    "status": "Status",
+    "tool": "Tool",
+    "reason": "Reason",
+    "error": "Error",
+    "unknown": "Unknown"
   }
 }

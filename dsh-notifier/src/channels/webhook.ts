@@ -28,6 +28,18 @@ export function isHighPriorityEvent(event: string, kind?: string): boolean {
   );
 }
 
+/** 判断 URL 查询串中是否已存在指定参数（用于避免 Telegram chat_id 被 secret 重复覆盖）。 */
+function hasQueryParam(url: string, name: string): boolean {
+  const queryIndex = url.indexOf('?');
+  if (queryIndex === -1) {
+    return false;
+  }
+  const query = url.slice(queryIndex + 1).split('#')[0];
+  return query
+    .split('&')
+    .some((pair) => decodeURIComponent(pair.split('=')[0] ?? '').trim() === name);
+}
+
 function generateFeishuSign(secret: string, timestamp: number): string {
   const stringToSign = `${timestamp}\n${secret}`;
   return crypto.createHmac('sha256', stringToSign).update('').digest('base64');
@@ -123,6 +135,41 @@ export async function sendWebhookNotification(
           // 点击通知直接跳转 DSH 控制台；metadata.url 可覆盖为更具体的地址
           url: metadata?.url || DEFAULT_BARK_URL,
           badge: kind === 'error' ? 2 : 1,
+        };
+        break;
+      }
+
+      case 'telegram': {
+        // Telegram Bot API：secret 作为 chat_id 的便捷配置入口；
+        // URL 查询串已自带 chat_id 时以 URL 为准，避免重复且冲突的会话目标。
+        body = {
+          text: `*${title}*\n\n${message}`,
+          parse_mode: 'Markdown',
+        };
+        if (config.secret && !hasQueryParam(targetUrl, 'chat_id')) {
+          body.chat_id = config.secret;
+        }
+        break;
+      }
+
+      case 'discord': {
+        const embedColor =
+          kind === 'error'
+            ? 0xff0000
+            : kind === 'warning'
+              ? 0xffa500
+              : kind === 'success'
+                ? 0x00ff00
+                : 0x3498db;
+        body = {
+          embeds: [
+            {
+              title,
+              description: message,
+              color: embedColor,
+              timestamp: new Date().toISOString(),
+            },
+          ],
         };
         break;
       }

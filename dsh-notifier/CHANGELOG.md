@@ -2,6 +2,26 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-10-12
+
+### 新增 (Added)
+- **Windows WinRT Toast 内联音效**：`sendDesktopNotification()` 新增 `soundEnabled` 与 `soundKind` 选项，弹窗与提示音合并进同一次 PowerShell 调用（`<audio src="ms-winsoundevent:Notification.Reminder"/>` / `Notification.Default`），Windows 下子进程开销削减 50%，并彻底消除两次子进程先后启动导致的声画不同步。
+- **真正落地的多语言 (i18n)**：新增 `locale` 配置（`auto` | `zh` | `en`，默认 `auto`），`auto` 依次读取 `DSH_LOCALE`、`LANG`、`LC_ALL`，以 `en` 开头走英文，否则中文。标题、字段标签与耗时单位全部双语化，词典集中在新增的 `src/utils/i18n.ts`。
+- **Telegram 渠道**：`provider: 'telegram'`，Markdown 正文 `*标题*\n\n正文`，`secret` 作为 `chat_id`（URL 已自带 `chat_id` 时不覆盖）。
+- **Discord 渠道**：`provider: 'discord'`，Rich Embed 推送，按等级配色（错误 `#FF0000`、警告 `#FFA500`、成功 `#00FF00`、普通 `#3498DB`）并携带 ISO 时间戳。
+- **事件去重频控**：`NotificationDispatcher` 新增 200ms 相同事件去重窗口（`DispatcherOptions.debounceMs` 可调，`0` 关闭），保护下游网络请求；首次通知不延迟。
+- `formatDuration()` 支持小时级格式化：`1小时1分1秒` / `1h 1m 1s`。
+- `locale/zh.json` 与 `locale/en.json` 新增 `notifications` 词条段，与运行时代码词典一一对应。
+
+### 变更 (Changed)
+- **Windows 声音委托策略**：`win32` 平台上 `desktop.enabled` 与 `sound.enabled` 同时为真时，由桌面渠道承载声音，不再独立执行 `soundFn`；仅 `desktop.enabled === false && sound.enabled === true` 时才单独播放提示音。非 Windows 平台维持桌面与声音分离调用。
+- **Linux 通知精细化**：`warning` / `error` 级通知追加 `-u critical` 紧急度；`iconPath` 非空时追加 `-i`。
+- **macOS 通知精细化**：会话名改由 AppleScript `subtitle` 承载，正文只保留轮次与耗时，避免系统通知面板重复展示同一行；无副标题时自动降级为双参数脚本。
+- `DispatcherOptions` 新增 `platform` / `debounceMs` / `nowFn` 注入点，便于跨平台与时钟的确定性测试。
+
+### 测试 (Tests)
+- 测试套件扩充至 80 项：新增 WinRT 内联音频与静音回退、Linux 紧急度与图标、macOS `subtitle`、Telegram/Discord 载荷、Windows 单进程委托策略、中英文全量文案、小时级耗时、200ms 去重与窗口过期、Schema 递归 `meta` 完整性、打包产物端到端与版本/词条一致性校验。
+
 ## [0.2.1] - 2026-10-12
 
 ### 修复 (Fixed)

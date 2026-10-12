@@ -167,3 +167,85 @@ test('e2e: bundled plugin filters turns by events.minDurationSeconds with deskto
     '超过阈值后应仅派发 Webhook：desktop 已关闭，且过滤阈值来自 events 而非 desktop 配置'
   );
 });
+
+test('e2e: Windows 场景下弹窗与声音合并为一次桌面调用', async () => {
+  const calls: string[] = [];
+  let desktopOptions: any;
+
+  const config = resolveConfig({
+    locale: 'zh',
+    desktop: { enabled: true },
+    sound: { enabled: true },
+    events: { onTurnEnd: true, minDurationSeconds: 0 },
+  });
+
+  const dispatcher = new NotificationDispatcher(config, {
+    platform: 'win32',
+    debounceMs: 0,
+    desktopFn: async (_title, _message, options) => {
+      calls.push('desktop');
+      desktopOptions = options;
+      return true;
+    },
+    soundFn: async () => {
+      calls.push('sound');
+      return true;
+    },
+  });
+
+  await dispatcher.onTurnEnd({
+    turn: 1,
+    reason: { kind: 'completed' },
+    durationMs: 6000,
+    sessionTitle: '构建流水线',
+  });
+
+  assert.deepEqual(calls, ['desktop'], 'Windows 必须只启动一次 PowerShell 子进程');
+  assert.equal(desktopOptions.soundEnabled, true);
+  assert.equal(desktopOptions.soundKind, 'success');
+  assert.equal(desktopOptions.subtitle, '构建流水线');
+});
+
+test('e2e: 英文环境下派发英文通知文案与小时级耗时', async () => {
+  const records: string[] = [];
+  const originalDshLocale = process.env.DSH_LOCALE;
+  const originalLang = process.env.LANG;
+  process.env.DSH_LOCALE = 'en-US';
+  delete process.env.LANG;
+
+  try {
+    const config = resolveConfig({
+      locale: 'auto',
+      desktop: { enabled: true },
+      sound: { enabled: false },
+      events: { onTurnEnd: true, minDurationSeconds: 0 },
+    });
+
+    const dispatcher = new NotificationDispatcher(config, {
+      platform: 'linux',
+      debounceMs: 0,
+      desktopFn: async (title, message) => {
+        records.push(`${title}|${message}`);
+        return true;
+      },
+    });
+
+    await dispatcher.onTurnEnd({
+      turn: 2,
+      reason: { kind: 'completed' },
+      durationMs: 3_661_000,
+      sessionTitle: 'Release',
+    });
+  } finally {
+    if (originalDshLocale === undefined) delete process.env.DSH_LOCALE;
+    else process.env.DSH_LOCALE = originalDshLocale;
+    if (originalLang === undefined) delete process.env.LANG;
+    else process.env.LANG = originalLang;
+  }
+
+  assert.equal(records.length, 1);
+  assert.match(records[0], /DeepSeek Harness - Task Completed/);
+  assert.match(records[0], /Session: Release/);
+  assert.match(records[0], /1h 1m 1s/);
+});
+

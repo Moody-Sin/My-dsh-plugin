@@ -1,5 +1,7 @@
 // src/config.ts
+var DEFAULT_LOCALE = "auto";
 var DEFAULT_CONFIG = {
+  locale: DEFAULT_LOCALE,
   desktop: {
     enabled: true,
     // 保留以保持完全向下兼容，实际过滤阈值以 events.minDurationSeconds 优先
@@ -22,13 +24,26 @@ var DEFAULT_CONFIG = {
     secret: ""
   }
 };
-var VALID_PROVIDERS = /* @__PURE__ */ new Set(["feishu", "dingtalk", "wecom", "bark", "generic"]);
+var VALID_PROVIDERS = /* @__PURE__ */ new Set([
+  "feishu",
+  "dingtalk",
+  "wecom",
+  "bark",
+  "telegram",
+  "discord",
+  "generic"
+]);
+var VALID_LOCALES = /* @__PURE__ */ new Set(["auto", "zh", "en"]);
 function normalizeDurationSeconds(value) {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : void 0;
+}
+function normalizeLocale(value) {
+  return typeof value === "string" && VALID_LOCALES.has(value) ? value : DEFAULT_LOCALE;
 }
 function resolveConfig(candidate) {
   if (candidate === null || typeof candidate !== "object") {
     return {
+      locale: DEFAULT_LOCALE,
       desktop: { ...DEFAULT_CONFIG.desktop },
       sound: { ...DEFAULT_CONFIG.sound },
       events: { ...DEFAULT_CONFIG.events },
@@ -45,6 +60,7 @@ function resolveConfig(candidate) {
   const minDuration = eventsMin ?? desktopMin ?? DEFAULT_CONFIG.events.minDurationSeconds ?? 5;
   const provider = VALID_PROVIDERS.has(webhookRaw.provider) ? webhookRaw.provider : DEFAULT_CONFIG.webhook.provider;
   return {
+    locale: normalizeLocale(raw.locale),
     desktop: {
       enabled: typeof desktopRaw.enabled === "boolean" ? desktopRaw.enabled : DEFAULT_CONFIG.desktop.enabled,
       minDurationSeconds: desktopMin ?? minDuration
@@ -68,6 +84,11 @@ function resolveConfig(candidate) {
   };
 }
 var SCHEMA_DICT = {
+  locale: {
+    type: "string",
+    description: "\u901A\u77E5\u6587\u6848\u8BED\u8A00\uFF1Aauto\uFF08\u6309 DSH_LOCALE/LANG/LC_ALL \u81EA\u52A8\u5224\u65AD\uFF09| zh | en\uFF0C\u9ED8\u8BA4 auto",
+    meta: {}
+  },
   desktop: {
     type: "object",
     description: "\u684C\u9762\u901A\u77E5\u6E20\u9053\u914D\u7F6E\uFF08minDurationSeconds \u5DF2\u5E9F\u5F03\uFF0C\u4EC5\u4F5C\u5411\u540E\u517C\u5BB9\u56DE\u9000\uFF09",
@@ -81,7 +102,7 @@ var SCHEMA_DICT = {
   },
   sound: {
     type: "object",
-    description: "\u7CFB\u7EDF\u63D0\u793A\u97F3\u914D\u7F6E",
+    description: "\u7CFB\u7EDF\u63D0\u793A\u97F3\u914D\u7F6E\uFF08Windows \u4E0B\u7531\u684C\u9762 Toast \u5185\u8054\u64AD\u653E\uFF0C\u4E0D\u989D\u5916\u542F\u52A8\u5B50\u8FDB\u7A0B\uFF09",
     meta: {},
     dict: {
       enabled: { type: "boolean", description: "\u662F\u5426\u5728\u901A\u77E5\u65F6\u64AD\u653E\u7CFB\u7EDF\u63D0\u793A\u97F3", meta: {} }
@@ -109,9 +130,17 @@ var SCHEMA_DICT = {
     meta: {},
     dict: {
       enabled: { type: "boolean", description: "\u662F\u5426\u5F00\u542F Webhook \u8FDC\u7AEF\u63A8\u9001", meta: {} },
-      provider: { type: "string", description: "\u6E20\u9053\u7C7B\u578B\uFF1Afeishu | dingtalk | wecom | bark | generic", meta: {} },
+      provider: {
+        type: "string",
+        description: "\u6E20\u9053\u7C7B\u578B\uFF1Afeishu | dingtalk | wecom | bark | telegram | discord | generic",
+        meta: {}
+      },
       url: { type: "string", description: "Webhook \u673A\u5668\u4EBA\u5730\u5740", meta: {} },
-      secret: { type: "string", description: "\u7B7E\u540D\u5BC6\u94A5\uFF08\u53EF\u9009\uFF09", meta: {} }
+      secret: {
+        type: "string",
+        description: "\u7B7E\u540D\u5BC6\u94A5\uFF08\u53EF\u9009\uFF09\uFF1Btelegram \u6E20\u9053\u4E0B\u4F5C\u4E3A chat_id",
+        meta: {}
+      }
     }
   }
 };
@@ -143,6 +172,9 @@ var Config = Object.assign(
   }
 );
 
+// src/dispatcher.ts
+import os3 from "node:os";
+
 // src/channels/desktop.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -158,6 +190,13 @@ function escapeXml(text) {
 
 // src/channels/desktop.ts
 var defaultExec = promisify(execFile);
+function buildWinAudioElement(soundEnabled, soundKind) {
+  if (!soundEnabled) {
+    return '<audio silent="true"/>';
+  }
+  const source = soundKind === "alert" ? "ms-winsoundevent:Notification.Reminder" : "ms-winsoundevent:Notification.Default";
+  return `<audio src="${source}"/>`;
+}
 async function sendDesktopNotification(title, message, options = {}) {
   const platform = options.platform || os.platform();
   const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args, { timeout: 5e3, windowsHide: true }));
@@ -165,7 +204,8 @@ async function sendDesktopNotification(title, message, options = {}) {
     if (platform === "win32") {
       const escapedTitle = escapeXml(title);
       const escapedMessage = escapeXml(message);
-      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual><audio silent="true"/></toast>`;
+      const audioElement = buildWinAudioElement(options.soundEnabled === true, options.soundKind ?? "default");
+      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual>${audioElement}</toast>`;
       const base64Xml = Buffer.from(xmlString, "utf-8").toString("base64");
       const psScript = `
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
@@ -185,20 +225,35 @@ try {
       await exec("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]);
       return true;
     } else if (platform === "darwin") {
-      await exec("osascript", [
-        "-e",
+      const script = [
         "on run argv",
-        "-e",
+        "if (count of argv) > 2 then",
+        "display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)",
+        "else",
         "display notification (item 1 of argv) with title (item 2 of argv)",
-        "-e",
-        "end run",
-        "--",
-        message,
-        title
-      ]);
+        "end if",
+        "end run"
+      ];
+      const scriptArgs = [];
+      for (const line of script) {
+        scriptArgs.push("-e", line);
+      }
+      scriptArgs.push("--", message, title);
+      if (options.subtitle) {
+        scriptArgs.push(options.subtitle);
+      }
+      await exec("osascript", scriptArgs);
       return true;
     } else if (platform === "linux") {
-      await exec("notify-send", [title, message]);
+      const args = [];
+      if (options.kind === "warning" || options.kind === "error") {
+        args.push("-u", "critical");
+      }
+      if (options.iconPath) {
+        args.push("-i", options.iconPath);
+      }
+      args.push(title, message);
+      await exec("notify-send", args);
       return true;
     }
     return false;
@@ -240,6 +295,14 @@ import crypto from "node:crypto";
 var DEFAULT_BARK_URL = "http://127.0.0.1:3080";
 function isHighPriorityEvent(event, kind) {
   return event === "user-questions/request" || event === "approval/request" || kind === "warning" || kind === "error";
+}
+function hasQueryParam(url, name2) {
+  const queryIndex = url.indexOf("?");
+  if (queryIndex === -1) {
+    return false;
+  }
+  const query = url.slice(queryIndex + 1).split("#")[0];
+  return query.split("&").some((pair) => decodeURIComponent(pair.split("=")[0] ?? "").trim() === name2);
 }
 function generateFeishuSign(secret, timestamp) {
   const stringToSign = `${timestamp}
@@ -331,6 +394,32 @@ ${message}`
         };
         break;
       }
+      case "telegram": {
+        body = {
+          text: `*${title}*
+
+${message}`,
+          parse_mode: "Markdown"
+        };
+        if (config.secret && !hasQueryParam(targetUrl, "chat_id")) {
+          body.chat_id = config.secret;
+        }
+        break;
+      }
+      case "discord": {
+        const embedColor = kind === "error" ? 16711680 : kind === "warning" ? 16753920 : kind === "success" ? 65280 : 3447003;
+        body = {
+          embeds: [
+            {
+              title,
+              description: message,
+              color: embedColor,
+              timestamp: (/* @__PURE__ */ new Date()).toISOString()
+            }
+          ]
+        };
+        break;
+      }
       case "generic":
       default: {
         body = {
@@ -372,43 +461,158 @@ ${message}`
   }
 }
 
+// src/utils/i18n.ts
+var DICTIONARIES = {
+  zh: {
+    taskCompleted: "DeepSeek Harness - \u4EFB\u52A1\u5DF2\u5B8C\u6210",
+    taskEnded: "DeepSeek Harness - \u4EFB\u52A1\u5DF2\u7ED3\u675F",
+    waitingForResponse: "DeepSeek Harness - \u7B49\u5F85\u60A8\u7684\u56DE\u7B54",
+    approvalRequested: "DeepSeek Harness - \u8BF7\u6C42\u6743\u9650\u5BA1\u6279",
+    taskError: "DeepSeek Harness - \u4EFB\u52A1\u5F02\u5E38",
+    session: "\u4F1A\u8BDD",
+    turn: "\u8F6E\u6B21",
+    duration: "\u8017\u65F6",
+    status: "\u72B6\u6001",
+    tool: "\u5DE5\u5177",
+    reason: "\u7406\u7531",
+    error: "\u9519\u8BEF",
+    unknown: "\u672A\u77E5"
+  },
+  en: {
+    taskCompleted: "DeepSeek Harness - Task Completed",
+    taskEnded: "DeepSeek Harness - Task Ended",
+    waitingForResponse: "DeepSeek Harness - Waiting for Response",
+    approvalRequested: "DeepSeek Harness - Approval Requested",
+    taskError: "DeepSeek Harness - Task Error",
+    session: "Session",
+    turn: "Turn",
+    duration: "Duration",
+    status: "Status",
+    tool: "Tool",
+    reason: "Reason",
+    error: "Error",
+    unknown: "Unknown"
+  }
+};
+function normalizeLocaleTag(tag) {
+  if (!tag) return void 0;
+  return tag.trim().toLowerCase().startsWith("en") ? "en" : "zh";
+}
+function resolveLocale(setting, env = process.env) {
+  if (setting === "zh" || setting === "en") {
+    return setting;
+  }
+  return normalizeLocaleTag(env.DSH_LOCALE) ?? normalizeLocaleTag(env.LANG) ?? normalizeLocaleTag(env.LC_ALL) ?? "zh";
+}
+function t(locale, key) {
+  return DICTIONARIES[locale][key];
+}
+function label(locale, key) {
+  return `${t(locale, key)}:`;
+}
+
 // src/dispatcher.ts
-function formatDuration(durationMs) {
+var DEFAULT_DEBOUNCE_MS = 200;
+var MAX_DEBOUNCE_ENTRIES = 200;
+function formatDuration(durationMs, locale = "zh") {
   if (!Number.isFinite(durationMs) || durationMs < 0) {
-    return "\u672A\u77E5";
+    return t(locale, "unknown");
   }
   const seconds = Math.round(durationMs / 1e3);
+  const en = locale === "en";
   if (seconds < 60) {
-    return `${seconds}\u79D2`;
+    return en ? `${seconds}s` : `${seconds}\u79D2`;
   }
   const mins = Math.floor(seconds / 60);
   const remSecs = seconds % 60;
-  return `${mins}\u5206${remSecs}\u79D2`;
+  if (mins < 60) {
+    return en ? `${mins}m ${remSecs}s` : `${mins}\u5206${remSecs}\u79D2`;
+  }
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return en ? `${hours}h ${remMins}m ${remSecs}s` : `${hours}\u5C0F\u65F6${remMins}\u5206${remSecs}\u79D2`;
 }
 var NotificationDispatcher = class {
   config;
+  locale;
+  platform;
+  debounceMs;
+  nowFn;
   desktopFn;
   soundFn;
   webhookFn;
+  /** 事件键 → 上次派发时间戳，用于窗口内去重。 */
+  recentEvents = /* @__PURE__ */ new Map();
   constructor(config, options = {}) {
     this.config = config;
+    this.locale = resolveLocale(config.locale);
+    this.platform = options.platform || os3.platform();
+    this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.nowFn = options.nowFn || Date.now;
     this.desktopFn = options.desktopFn || sendDesktopNotification;
     this.soundFn = options.soundFn || playNotificationSound;
     this.webhookFn = options.webhookFn || sendWebhookNotification;
   }
-  async dispatch(title, message, event, kind = "info", soundKind = "default") {
-    const tasks = [];
-    if (this.config.desktop.enabled) {
-      tasks.push(this.desktopFn(title, message).catch(() => false));
+  /**
+   * 防抖判定：窗口内出现完全相同的事件键时返回 true（应抑制）。
+   * 首次出现一律放行，不做延迟，保证通知实时性。
+   */
+  isDuplicate(key) {
+    if (this.debounceMs <= 0) {
+      return false;
     }
-    if (this.config.sound.enabled) {
+    const now = this.nowFn();
+    const last = this.recentEvents.get(key);
+    if (last !== void 0 && now - last < this.debounceMs) {
+      return true;
+    }
+    for (const [existingKey, timestamp] of this.recentEvents) {
+      if (now - timestamp >= this.debounceMs) {
+        this.recentEvents.delete(existingKey);
+      }
+    }
+    if (this.recentEvents.size >= MAX_DEBOUNCE_ENTRIES) {
+      const oldestKey = this.recentEvents.keys().next().value;
+      if (oldestKey !== void 0) {
+        this.recentEvents.delete(oldestKey);
+      }
+    }
+    this.recentEvents.set(key, now);
+    return false;
+  }
+  async dispatch(title, message, event, kind = "info", soundKind = "default", extras = {}) {
+    const sessionTitle = extras.sessionTitle;
+    const sessionLine = sessionTitle ? `${label(this.locale, "session")} ${sessionTitle}` : void 0;
+    const macMessage = extras.bodyLines ? extras.bodyLines.join("\n") : message;
+    const fullMessage = sessionLine ? `${sessionLine}
+${macMessage}` : macMessage;
+    if (this.isDuplicate([event, title, fullMessage, kind, soundKind].join("\0"))) {
+      return;
+    }
+    const tasks = [];
+    const isWindows = this.platform === "win32";
+    const desktopEnabled = this.config.desktop.enabled;
+    const soundEnabled = this.config.sound.enabled;
+    if (desktopEnabled) {
+      const inlineSound = isWindows && soundEnabled;
+      tasks.push(
+        this.desktopFn(title, this.platform === "darwin" ? macMessage : fullMessage, {
+          platform: this.platform,
+          kind,
+          subtitle: sessionTitle,
+          soundEnabled: inlineSound,
+          soundKind
+        }).catch(() => false)
+      );
+    }
+    if (soundEnabled && !(isWindows && desktopEnabled)) {
       tasks.push(this.soundFn(soundKind).catch(() => false));
     }
     if (this.config.webhook.enabled && this.config.webhook.url) {
       tasks.push(
         this.webhookFn(this.config.webhook, {
           title,
-          message,
+          message: fullMessage,
           event,
           kind
         }).catch(() => false)
@@ -426,70 +630,62 @@ var NotificationDispatcher = class {
       return;
     }
     const isSuccess = info.reason.kind === "completed";
-    const title = isSuccess ? "DeepSeek Harness - \u4EFB\u52A1\u5DF2\u5B8C\u6210" : "DeepSeek Harness - \u4EFB\u52A1\u5DF2\u7ED3\u675F";
+    const title = t(this.locale, isSuccess ? "taskCompleted" : "taskEnded");
     const lines = [];
-    if (info.sessionTitle) {
-      lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
-    }
-    const durationText = formatDuration(info.durationMs);
-    lines.push(`\u8F6E\u6B21: #${info.turn} \xB7 \u8017\u65F6: ${durationText}`);
+    const durationText = formatDuration(info.durationMs, this.locale);
+    lines.push(
+      `${label(this.locale, "turn")} #${info.turn} \xB7 ${label(this.locale, "duration")} ${durationText}`
+    );
     if (!isSuccess && info.reason.kind) {
-      lines.push(`\u72B6\u6001: ${info.reason.kind}`);
+      lines.push(`${label(this.locale, "status")} ${info.reason.kind}`);
     }
     const message = lines.join("\n");
-    await this.dispatch(
-      title,
-      message,
-      "turn/end",
-      isSuccess ? "success" : "info",
-      isSuccess ? "success" : "default"
-    );
+    await this.dispatch(title, message, "turn/end", isSuccess ? "success" : "info", isSuccess ? "success" : "default", {
+      sessionTitle: info.sessionTitle,
+      bodyLines: lines
+    });
   }
   async onUserQuestion(info) {
     if (!this.config.events.onQuestion) {
       return;
     }
-    const title = "DeepSeek Harness - \u7B49\u5F85\u60A8\u7684\u56DE\u7B54";
+    const title = t(this.locale, "waitingForResponse");
     const lines = [];
-    if (info.sessionTitle) {
-      lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
-    }
     if (info.questions && info.questions.length > 0) {
       const qList = info.questions.map((q, i) => info.questions.length > 1 ? `${i + 1}. ${q.question}` : q.question);
       lines.push(qList.join("\n"));
     }
-    const message = lines.join("\n");
-    await this.dispatch(title, message, "user-questions/request", "warning", "alert");
+    await this.dispatch(title, lines.join("\n"), "user-questions/request", "warning", "alert", {
+      sessionTitle: info.sessionTitle,
+      bodyLines: lines
+    });
   }
   async onApproval(info) {
     if (!this.config.events.onApproval) {
       return;
     }
-    const title = "DeepSeek Harness - \u8BF7\u6C42\u6743\u9650\u5BA1\u6279";
+    const title = t(this.locale, "approvalRequested");
     const lines = [];
-    if (info.sessionTitle) {
-      lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
-    }
-    lines.push(`\u5DE5\u5177: ${info.toolName}`);
+    lines.push(`${label(this.locale, "tool")} ${info.toolName}`);
     if (info.reason) {
-      lines.push(`\u7406\u7531: ${info.reason}`);
+      lines.push(`${label(this.locale, "reason")} ${info.reason}`);
     }
-    const message = lines.join("\n");
-    await this.dispatch(title, message, "approval/request", "warning", "alert");
+    await this.dispatch(title, lines.join("\n"), "approval/request", "warning", "alert", {
+      sessionTitle: info.sessionTitle,
+      bodyLines: lines
+    });
   }
   async onError(info) {
     if (!this.config.events.onError) {
       return;
     }
-    const title = "DeepSeek Harness - \u4EFB\u52A1\u5F02\u5E38";
-    const lines = [];
-    if (info.sessionTitle) {
-      lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
-    }
+    const title = t(this.locale, "taskError");
     const errMsg = info.error instanceof Error ? info.error.message : String(info.error);
-    lines.push(`\u9519\u8BEF: ${errMsg}`);
-    const message = lines.join("\n");
-    await this.dispatch(title, message, "agent/error", "error", "alert");
+    const lines = [`${label(this.locale, "error")} ${errMsg}`];
+    await this.dispatch(title, lines.join("\n"), "agent/error", "error", "alert", {
+      sessionTitle: info.sessionTitle,
+      bodyLines: lines
+    });
   }
 };
 

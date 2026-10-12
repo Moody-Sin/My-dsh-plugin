@@ -1,6 +1,21 @@
 {
   "meta": {
     "title": "系统与移动端通知",
-    "description": "在任务完成、等待提问、等待审批及错误发生时，发送系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/通用Webhook通知。"
+    "description": "在任务完成、等待提问、等待审批及错误发生时，发送系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/Telegram/Discord/通用Webhook通知。"
+  },
+  "notifications": {
+    "taskCompleted": "DeepSeek Harness - 任务已完成",
+    "taskEnded": "DeepSeek Harness - 任务已结束",
+    "waitingForResponse": "DeepSeek Harness - 等待您的回答",
+    "approvalRequested": "DeepSeek Harness - 请求权限审批",
+    "taskError": "DeepSeek Harness - 任务异常",
+    "session": "会话",
+    "turn": "轮次",
+    "duration": "耗时",
+    "status": "状态",
+    "tool": "工具",
+    "reason": "理由",
+    "error": "错误",
+    "unknown": "未知"
   }
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NotificationDispatcher, formatDuration } from '../src/dispatcher.ts';
 import { resolveConfig } from '../src/config.ts';
+import { resolveLocale } from '../src/utils/i18n.ts';
 
 test('dispatcher: formatDuration handles normal and non-finite numbers', () => {
   assert.equal(formatDuration(15000), '15秒');
@@ -45,6 +46,7 @@ test('dispatcher: onTurnEnd dispatches notifications when duration meets thresho
   let dispatchedMsg = '';
 
   const config = resolveConfig({
+    locale: 'zh',
     desktop: { enabled: true, minDurationSeconds: 5 },
     events: { onTurnEnd: true },
     sound: { enabled: true },
@@ -84,6 +86,7 @@ test('dispatcher: onUserQuestion triggers high-priority alert notification', asy
   });
 
   const dispatcher = new NotificationDispatcher(config, {
+    platform: 'linux',
     desktopFn: async (_t, msg) => { desktopMsg = msg; return true; },
     soundFn: async (kind) => { soundKind = kind; return true; },
     webhookFn: async () => true,
@@ -103,6 +106,7 @@ test('dispatcher: onApproval triggers approval alert notification', async () => 
   let desktopMsg = '';
 
   const config = resolveConfig({
+    locale: 'zh',
     desktop: { enabled: true },
     events: { onApproval: true },
   });
@@ -150,10 +154,12 @@ test('dispatcher: onError triggers error alert notification and formats message'
   let errorKind = '';
 
   const config = resolveConfig({
+    locale: 'zh',
     events: { onError: true },
   });
 
   const dispatcher = new NotificationDispatcher(config, {
+    platform: 'linux',
     desktopFn: async (t, msg) => {
       errorTitle = t;
       errorMsg = msg;
@@ -279,3 +285,169 @@ test('dispatcher: onTurnEnd uses a 5-second safety fallback when thresholds are 
   await dispatcher.onTurnEnd({ turn: 2, reason: { kind: 'completed' }, durationMs: 5000 });
   assert.equal(called, true, '达到 5 秒兜底阈值应派发');
 });
+
+test('dispatcher: formatDuration 支持中英文小时、分钟、秒与未知值', () => {
+  assert.equal(formatDuration(3_661_000, 'zh'), '1小时1分1秒');
+  assert.equal(formatDuration(3_661_000, 'en'), '1h 1m 1s');
+  assert.equal(formatDuration(75_000, 'en'), '1m 15s');
+  assert.equal(formatDuration(15_000, 'en'), '15s');
+  assert.equal(formatDuration(Infinity, 'en'), 'Unknown');
+});
+
+test('dispatcher: auto locale 按 DSH_LOCALE、LANG、LC_ALL 顺序解析', () => {
+  assert.equal(resolveLocale('auto', { DSH_LOCALE: 'en-US', LANG: 'zh_CN', LC_ALL: 'zh_CN' }), 'en');
+  assert.equal(resolveLocale('auto', { LANG: 'en_GB', LC_ALL: 'zh_CN' }), 'en');
+  assert.equal(resolveLocale('auto', { LC_ALL: 'en_US.UTF-8' }), 'en');
+  assert.equal(resolveLocale('auto', { DSH_LOCALE: 'zh-CN', LANG: 'en_US' }), 'zh');
+  assert.equal(resolveLocale('auto', {}), 'zh');
+});
+
+test('dispatcher: 英文配置翻译标题与全部字段标签', async () => {
+  const records: { title: string; message: string }[] = [];
+  const config = resolveConfig({
+    locale: 'en',
+    desktop: { enabled: true },
+    sound: { enabled: false },
+    events: { minDurationSeconds: 0 },
+  });
+  const dispatcher = new NotificationDispatcher(config, {
+    platform: 'linux',
+    debounceMs: 0,
+    desktopFn: async (title, message) => {
+      records.push({ title, message });
+      return true;
+    },
+  });
+
+  await dispatcher.onTurnEnd({
+    turn: 7,
+    reason: { kind: 'cancelled' },
+    durationMs: 3_661_000,
+    sessionTitle: 'Release',
+  });
+  await dispatcher.onUserQuestion({ questions: [{ question: 'Continue?' }], sessionTitle: 'Release' });
+  await dispatcher.onApproval({ toolName: 'pwsh', reason: 'Deploy', sessionTitle: 'Release' });
+  await dispatcher.onError({ error: new Error('Boom'), sessionTitle: 'Release' });
+
+  assert.equal(records[0].title, 'DeepSeek Harness - Task Ended');
+  assert.match(records[0].message, /Session: Release/);
+  assert.match(records[0].message, /Turn: #7 · Duration: 1h 1m 1s/);
+  assert.match(records[0].message, /Status: cancelled/);
+  assert.equal(records[1].title, 'DeepSeek Harness - Waiting for Response');
+  assert.equal(records[2].title, 'DeepSeek Harness - Approval Requested');
+  assert.match(records[2].message, /Tool: pwsh/);
+  assert.match(records[2].message, /Reason: Deploy/);
+  assert.equal(records[3].title, 'DeepSeek Harness - Task Error');
+  assert.match(records[3].message, /Error: Boom/);
+});
+
+test('dispatcher: Windows 桌面与声音同时开启时仅调用 desktopFn 并委托内联声音', async () => {
+  let desktopCalls = 0;
+  let soundCalls = 0;
+  let receivedOptions: any;
+  const dispatcher = new NotificationDispatcher(resolveConfig({
+    desktop: { enabled: true },
+    sound: { enabled: true },
+    events: { minDurationSeconds: 0 },
+  }), {
+    platform: 'win32',
+    desktopFn: async (_title, _message, options) => {
+      desktopCalls += 1;
+      receivedOptions = options;
+      return true;
+    },
+    soundFn: async () => { soundCalls += 1; return true; },
+  });
+
+  await dispatcher.onUserQuestion({ questions: [{ question: '确认？' }], sessionTitle: '会话 A' });
+
+  assert.equal(desktopCalls, 1);
+  assert.equal(soundCalls, 0, 'Windows 不得再启动第二个声音子进程');
+  assert.equal(receivedOptions.soundEnabled, true);
+  assert.equal(receivedOptions.soundKind, 'alert');
+  assert.equal(receivedOptions.kind, 'warning');
+  assert.equal(receivedOptions.subtitle, '会话 A');
+});
+
+test('dispatcher: Windows 仅启用声音时独立调用 soundFn', async () => {
+  let desktopCalls = 0;
+  let soundCalls = 0;
+  const dispatcher = new NotificationDispatcher(resolveConfig({
+    desktop: { enabled: false }, sound: { enabled: true }, events: { minDurationSeconds: 0 },
+  }), {
+    platform: 'win32',
+    desktopFn: async () => { desktopCalls += 1; return true; },
+    soundFn: async () => { soundCalls += 1; return true; },
+  });
+
+  await dispatcher.onTurnEnd({ turn: 1, reason: { kind: 'completed' }, durationMs: 1_000 });
+  assert.equal(desktopCalls, 0);
+  assert.equal(soundCalls, 1);
+});
+
+test('dispatcher: Windows 关闭声音时弹窗保持静音且不播放提示音', async () => {
+  let soundCalls = 0;
+  let receivedOptions: any;
+  const dispatcher = new NotificationDispatcher(resolveConfig({
+    desktop: { enabled: true }, sound: { enabled: false }, events: { minDurationSeconds: 0 },
+  }), {
+    platform: 'win32',
+    desktopFn: async (_title, _message, options) => {
+      receivedOptions = options;
+      return true;
+    },
+    soundFn: async () => { soundCalls += 1; return true; },
+  });
+
+  await dispatcher.onTurnEnd({ turn: 1, reason: { kind: 'completed' }, durationMs: 1_000 });
+
+  assert.equal(soundCalls, 0);
+  assert.equal(receivedOptions.soundEnabled, false, '关闭声音时必须回落到静音 Toast');
+});
+
+test('dispatcher: 非 Windows 平台继续分别调用桌面与声音渠道', async () => {
+  const calls: string[] = [];
+  const dispatcher = new NotificationDispatcher(resolveConfig({
+    desktop: { enabled: true }, sound: { enabled: true }, events: { minDurationSeconds: 0 },
+  }), {
+    platform: 'darwin',
+    desktopFn: async (_title, message, options) => {
+      calls.push('desktop');
+      assert.equal(options?.subtitle, 'macOS 会话');
+      assert.ok(!message.includes('会话:'), 'macOS message 不应重复 subtitle 中的会话名');
+      return true;
+    },
+    soundFn: async () => { calls.push('sound'); return true; },
+  });
+
+  await dispatcher.onTurnEnd({
+    turn: 1, reason: { kind: 'completed' }, durationMs: 1_000, sessionTitle: 'macOS 会话',
+  });
+  assert.deepEqual(calls.sort(), ['desktop', 'sound']);
+});
+
+test('dispatcher: 200ms 内完全相同事件去重且过期后重新派发', async () => {
+  let now = 1_000;
+  let calls = 0;
+  const dispatcher = new NotificationDispatcher(resolveConfig({
+    desktop: { enabled: true }, sound: { enabled: false }, events: { minDurationSeconds: 0 },
+  }), {
+    platform: 'linux',
+    nowFn: () => now,
+    desktopFn: async () => { calls += 1; return true; },
+  });
+  const event = { questions: [{ question: '是否继续？' }], sessionTitle: '防抖测试' };
+
+  await dispatcher.onUserQuestion(event);
+  now = 1_100;
+  await dispatcher.onUserQuestion(event);
+  assert.equal(calls, 1, '防抖窗口内重复事件必须被抑制');
+
+  now = 1_201;
+  await dispatcher.onUserQuestion(event);
+  assert.equal(calls, 2, '窗口过期后相同事件必须重新派发');
+
+  await dispatcher.onUserQuestion({ questions: [{ question: '另一个问题？' }], sessionTitle: '防抖测试' });
+  assert.equal(calls, 3, '内容不同的事件不得被误抑制');
+});
+

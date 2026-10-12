@@ -81,7 +81,7 @@ test('config: Config.toJSON exposes a serializable schema description', () => {
 
   assert.equal(json.type, 'object');
   assert.equal(json.description, 'DSH Notifier Configuration');
-  assert.deepEqual(Object.keys(json.dict).sort(), ['desktop', 'events', 'sound', 'webhook']);
+  assert.deepEqual(Object.keys(json.dict).sort(), ['desktop', 'events', 'locale', 'sound', 'webhook']);
   assert.deepEqual(JSON.parse(JSON.stringify(Config)), json);
 });
 
@@ -151,3 +151,34 @@ test('config: Config.toJSON describes the new events.minDurationSeconds field', 
   assert.match(json.dict.events.dict.minDurationSeconds.description, /过滤阈值/);
   assert.match(json.dict.desktop.dict.minDurationSeconds.description, /废弃/);
 });
+
+test('config: locale 默认为 auto 且仅接受 auto、zh、en', () => {
+  assert.equal(resolveConfig({}).locale, 'auto');
+  assert.equal(resolveConfig({ locale: 'zh' }).locale, 'zh');
+  assert.equal(resolveConfig({ locale: 'en' }).locale, 'en');
+  assert.equal(resolveConfig({ locale: 'fr' }).locale, 'auto');
+});
+
+test('config: Telegram 与 Discord 是有效 Webhook 提供商', () => {
+  assert.equal(resolveConfig({ webhook: { provider: 'telegram' } }).webhook.provider, 'telegram');
+  assert.equal(resolveConfig({ webhook: { provider: 'discord' } }).webhook.provider, 'discord');
+});
+
+test('config: Schema 暴露 locale 与全部提供商且每个节点都有 meta', () => {
+  const json = Config.toJSON();
+  assert.deepEqual(Object.keys(json.dict).sort(), ['desktop', 'events', 'locale', 'sound', 'webhook']);
+  assert.equal(json.dict.locale.type, 'string');
+  assert.match(json.dict.webhook.dict.provider.description, /telegram/);
+  assert.match(json.dict.webhook.dict.provider.description, /discord/);
+
+  const visit = (node: any, path = 'root') => {
+    if (path !== 'root') {
+      assert.ok(node.meta && typeof node.meta === 'object', `${path} 必须包含 meta`);
+    }
+    for (const [key, child] of Object.entries(node.dict || {})) {
+      visit(child, `${path}.${key}`);
+    }
+  };
+  visit({ dict: json.dict });
+});
+

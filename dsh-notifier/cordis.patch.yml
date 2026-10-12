@@ -3,6 +3,7 @@
     - id: notifier
       name: '@local/dsh-notifier'
       config:
+        locale: 'auto'
         desktop:
           enabled: true
           minDurationSeconds: 5
