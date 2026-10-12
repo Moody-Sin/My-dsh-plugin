@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   Config,
@@ -10,6 +11,21 @@ import {
   getPluginConfig,
   loadUmbrellaConfig,
 } from '../src/config.ts';
+
+/** 拦截 console.warn，收集告警文本并在回调结束后还原 */
+function captureWarnings(fn: () => void): string[] {
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(' '));
+  };
+  try {
+    fn();
+  } finally {
+    console.warn = originalWarn;
+  }
+  return warnings;
+}
 
 const BASE_FILENAME = 'plugins.config.json';
 const LOCAL_FILENAME = 'plugins.config.local.json';
@@ -173,6 +189,49 @@ test('getPluginConfig: 剥离 enabled 字段且不污染原始配置', () => {
     webhook: { url: 'https://example.com' },
   });
   assert.equal(section.enabled, true, '原始配置对象不得被就地删除字段');
+});
+
+test('loadUmbrellaConfig: 配置文件 JSON 损坏时输出带绝对路径的中文告警（缺陷 C）', (t) => {
+  const dir = makeTempDir();
+  t.after(() => cleanup(dir));
+
+  writeRaw(dir, BASE_FILENAME, '{ "plugins": { "notifier": ');
+
+  const result = { config: undefined as any, warnings: [] as string[] };
+  result.warnings = captureWarnings(() => {
+    result.config = loadUmbrellaConfig(dir);
+  });
+
+  assert.deepEqual(result.config, { plugins: {} }, '损坏文件仍须平稳降级');
+  assert.equal(result.warnings.length, 1, '解析失败必须告警，杜绝静默忽略用户配置');
+  assert.match(result.warnings[0], /\[my-dsh-plugins\]/);
+  assert.match(result.warnings[0], /配置文件解析失败/);
+  assert.ok(
+    result.warnings[0].includes(path.join(dir, BASE_FILENAME)),
+    `告警必须带上损坏文件的绝对路径，实际: ${result.warnings[0]}`,
+  );
+});
+
+test('loadUmbrellaConfig: 配置文件缺失（ENOENT）时不产生告警（缺陷 C）', (t) => {
+  const dir = makeTempDir();
+  t.after(() => cleanup(dir));
+
+  const warnings = captureWarnings(() => {
+    assert.deepEqual(loadUmbrellaConfig(dir), { plugins: {} });
+  });
+
+  assert.deepEqual(warnings, [], '文件不存在属正常情况，严禁刷屏告警');
+});
+
+test('UmbrellaLoaderConfig: 不再声明无人读取的死字段 configFile（缺陷 D）', (t) => {
+  const dir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const source = fs.readFileSync(path.join(dir, 'src', 'config.ts'), 'utf8');
+
+  assert.equal(
+    /configFile/.test(source),
+    false,
+    'configFile 全仓库无读取点，属死字段，必须从类型声明中移除',
+  );
 });
 
 test('Config: 符合 Standard Schema v1 接口约定', () => {
