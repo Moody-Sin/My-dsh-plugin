@@ -1,5 +1,6 @@
 node_modules/
 .superpowers/
+/docs/superpowers/
 lib/
 dist/
 
@@ -12,6 +13,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# 工作区子包不得自带 lockfile（统一由根 package-lock.json 锁定）
+dsh-*/package-lock.json
 
 # 编辑器与系统文件
 .DS_Store
