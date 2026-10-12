@@ -4,11 +4,33 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
+### 新增 (Added)
+- **聚合插件总线 (Umbrella Loader)** `@local/my-dsh-plugins`：
+  - 启动时全自动扫描 `dsh-*` 子目录，支持 ESM 动态挂载进 Cordis 容器。
+  - 单入口接入 DSH 官方 Profile，实现后续新增/删除插件对 DSH 官方配置文件 **0 修改**。
+  - 独立沙箱容错与异常隔离，单个插件加载失败不拖垮宿主及兄弟插件。
+  - Cordis 注册表自查与去重，杜绝重复挂载与事件重复监听。
+- **集中化双层配置架构**：
+  - `plugins.config.json`：随版本库提交的公共默认配置与模板。
+  - `plugins.config.local.json`：纳入 `.gitignore` 的本地私密覆盖配置（支持 Webhook Secret、私有 Token 等机密凭据安全隔离）。
+  - 支持快捷 `"enabled": false` 跳过模块导入，透传子配置前自动剥离控制元字段。
+  - 自主修复 Windows UTF-8 BOM 导致 JSON.parse 崩溃的兼容性缺陷。
+
+### 变更 (Changed)
+- 子插件目录与命名规范化：`dsh-plugin-notifier` 统一重命名为 `dsh-notifier`（包名 `@local/dsh-notifier`）。
+- 根目录 `package.json` 的 `workspaces` 通配规则更新为 `["dsh-*"]`。
+- DSH 官方 Profile（`~/.dsh/profiles/web/`）平滑迁移至聚合包 `@local/my-dsh-plugins`。
+
+### 测试 (Tests)
+- 全量自动化测试用例扩充至 76 项（根目录扫描器、双层配置器、聚合加载器 24 项 + 通知子插件 52 项），100% 绿色通过。
+
 ## [0.2.0] - 2026-10-12
 
 ### 新增 (Added)
 - 根目录引入 npm workspaces 统一工作区配置（`package.json`），支持全局联动执行 `test` 与 `build`。
-- `@local/dsh-plugin-notifier` 升级至 `0.2.0`：
+- `@local/dsh-notifier`（原 `@local/dsh-plugin-notifier`）升级至 `0.2.0`：
   - 新增 `events.minDurationSeconds` 全局/事件级耗时过滤阈值，彻底解耦桌面通知开关与 Webhook 离机推送过滤。
   - Bark 渠道 Payload 增加跳转链接（默认 `http://127.0.0.1:3080`）与 `badge` 角标。
   - Webhook 针对高优先级提问、审批与告警事件增加网络抖动自动退避重试（1 次重试）。
@@ -18,12 +40,12 @@
 - `desktop.minDurationSeconds` 标记为向后兼容保留字段，优先使用 `events.minDurationSeconds`。
 
 ### 测试 (Tests)
-- `@local/dsh-plugin-notifier` 测试套件扩充至 52 项，覆盖阈值解耦、向后兼容继承、网络超时重试、Bark 属性与降级容错。
+- `@local/dsh-notifier` 测试套件扩充至 52 项，覆盖阈值解耦、向后兼容继承、网络超时重试、Bark 属性与降级容错。
 
 ## [0.1.1] - 2026-10-12
 
 ### 修复 (Fixed)
-- 修复 `@local/dsh-plugin-notifier` 在 DSH 中加载失败（`fiberPhase: 'failed'`）的问题：为插件 `Config` 补充 Standard Schema 规范的 `['~standard']` 校验接口与 `toJSON()` 方法，兼容 Cordis v4 的 `runtime.Config['~standard'].validate(config)` 配置校验流程。
+- 修复插件在 DSH 中加载失败（`fiberPhase: 'failed'`）的问题：为插件 `Config` 补充 Standard Schema 规范的 `['~standard']` 校验接口与 `toJSON()` 方法，兼容 Cordis v4 的 `runtime.Config['~standard'].validate(config)` 配置校验流程。
 
 ## [0.1.0] - 2026-10-12
 

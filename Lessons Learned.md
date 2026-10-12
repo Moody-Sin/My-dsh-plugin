@@ -19,3 +19,9 @@
   1. **严格限制并发**：每次派发不得超过 2 个子 agent，且严禁让多个子 agent 同时修改同一代码包或相同文件集合，否则极易发生无文件锁的脏写覆盖、变量幻读（如 ReferenceError）与认知脱节。
   2. **任务原子化**：单个子 agent 的目标必须极其单一聚焦（如单个函数重构或单个文件修改），严禁一次性灌注包含 5 个以上模块的大包揽 Prompt，否则模型极易在耗尽工具轮次后发生“自述已完成但磁盘 0 写入”的幻觉。
   3. **严格证据闭环**：绝对不能单凭子 agent 的自我汇报断言成功，主 Agent 必须在每个子 agent 结束后通过 `git status`、`git diff`、回读文件内容与运行真实测试套件进行强校验。
+
+## 6. 配置文件 UTF-8 BOM 兼容性
+- **规则**：Windows 环境下部分工具（如 PowerShell `Set-Content -Encoding utf8` 或记事本保存）会产生带 UTF-8 BOM（`\uFEFF`）的 JSON 文件。Node.js 原生 `JSON.parse` 遇到 BOM 会抛出语法错误，若读取器包含“解析失败静默降级”逻辑，会导致用户填写的配置被静默忽略。解析配置文件前必须显式过滤开头的 BOM 字符（`content.replace(/^\uFEFF/, '')`）。
+
+## 7. Node ESM 在 TypeScript 源码与打包构建中的模块路径解析
+- **规则**：在 Node.js 原生 `--experimental-strip-types` 运行 TypeScript 测试时，源码之间的相对 import 必须保留 `.ts` 后缀（如 `import './config.ts'`），不能写成 `.js`，否则 Node ESM 会抛出 `ERR_MODULE_NOT_FOUND`；而 esbuild 构建时能天然识别并打包带 `.ts` 后缀的模块引用，打包产物 `index.js` 内部则内联各模块，同时兼容测试执行与生产打包。
