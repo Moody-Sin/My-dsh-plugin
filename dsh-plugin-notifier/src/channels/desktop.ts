@@ -16,13 +16,13 @@ export async function sendDesktopNotification(
   options: DesktopOptions = {}
 ): Promise<boolean> {
   const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000 }) as any);
+  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000, windowsHide: true }) as any);
 
   try {
     if (platform === 'win32') {
       const escapedTitle = escapeXml(title);
       const escapedMessage = escapeXml(message);
-      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual></toast>`;
+      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual><audio silent="true"/></toast>`;
       const base64Xml = Buffer.from(xmlString, 'utf-8').toString('base64');
 
       const psScript = `

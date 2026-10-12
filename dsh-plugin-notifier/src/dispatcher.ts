@@ -10,6 +10,9 @@ export interface DispatcherOptions {
 }
 
 export function formatDuration(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return '未知';
+  }
   const seconds = Math.round(durationMs / 1000);
   if (seconds < 60) {
     return `${seconds}秒`;
@@ -86,7 +89,8 @@ export class NotificationDispatcher {
     if (info.sessionTitle) {
       lines.push(`会话: ${info.sessionTitle}`);
     }
-    lines.push(`轮次: #${info.turn} · 耗时: ${formatDuration(info.durationMs)}`);
+    const durationText = formatDuration(info.durationMs);
+    lines.push(`轮次: #${info.turn} · 耗时: ${durationText}`);
     if (!isSuccess && info.reason.kind) {
       lines.push(`状态: ${info.reason.kind}`);
     }
@@ -114,8 +118,10 @@ export class NotificationDispatcher {
     if (info.sessionTitle) {
       lines.push(`会话: ${info.sessionTitle}`);
     }
-    const qList = info.questions.map((q, i) => (info.questions.length > 1 ? `${i + 1}. ${q.question}` : q.question));
-    lines.push(qList.join('\n'));
+    if (info.questions && info.questions.length > 0) {
+      const qList = info.questions.map((q, i) => (info.questions.length > 1 ? `${i + 1}. ${q.question}` : q.question));
+      lines.push(qList.join('\n'));
+    }
 
     const message = lines.join('\n');
     await this.dispatch(title, message, 'user-questions/request', 'warning', 'alert');

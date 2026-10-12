@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NotificationDispatcher } from '../src/dispatcher.ts';
+import { NotificationDispatcher, formatDuration } from '../src/dispatcher.ts';
 import { resolveConfig } from '../src/config.ts';
+
+test('dispatcher: formatDuration handles normal and non-finite numbers', () => {
+  assert.equal(formatDuration(15000), '15秒');
+  assert.equal(formatDuration(75000), '1分15秒');
+  assert.equal(formatDuration(Infinity), '未知');
+  assert.equal(formatDuration(-100), '未知');
+  assert.equal(formatDuration(NaN), '未知');
+});
 
 test('dispatcher: onTurnEnd skips notifications when duration is below threshold', async () => {
   let desktopCalled = false;

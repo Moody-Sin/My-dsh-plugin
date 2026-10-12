@@ -28,11 +28,17 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
   function getSessionTitle(session: any): string | undefined {
     if (!session) return undefined;
     try {
-      if (ctx.sessionTitle?.titleOf) {
-        return ctx.sessionTitle.titleOf(session);
+      if (typeof ctx.sessionTitle?.get === 'function') {
+        const snap = ctx.sessionTitle.get(session);
+        if (snap?.title) return snap.title;
       }
-      if (ctx.sessionTitle?.title) {
-        return ctx.sessionTitle.title(session);
+      if (typeof ctx.sessionTitle?.titleOf === 'function') {
+        const res = ctx.sessionTitle.titleOf(session);
+        if (res) return res;
+      }
+      if (typeof ctx.sessionTitle?.title === 'function') {
+        const res = ctx.sessionTitle.title(session);
+        if (res) return res;
       }
       if (session.header?.cwd) {
         return session.header.cwd;

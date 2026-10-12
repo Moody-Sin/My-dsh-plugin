@@ -32,7 +32,7 @@ test('e2e: bundled index.js successfully runs full lifecycle', async () => {
       return next();
     },
     sessionTitle: {
-      titleOf: (session: any) => `Session Title for ${session.id}`,
+      get: (session: any) => ({ title: `Session Title for ${session.id}` }),
     },
   };
 

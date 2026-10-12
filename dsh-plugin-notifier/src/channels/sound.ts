@@ -16,7 +16,7 @@ export async function playNotificationSound(
   options: SoundOptions = {}
 ): Promise<boolean> {
   const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000 }) as any);
+  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000, windowsHide: true }) as any);
 
   try {
     if (platform === 'win32') {

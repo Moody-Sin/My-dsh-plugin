@@ -83,7 +83,9 @@ import os from "node:os";
 
 // dsh-plugin-notifier/src/utils/xml.ts
 function escapeXml(text) {
-  if (!text) return "";
+  if (typeof text !== "string") {
+    text = String(text ?? "");
+  }
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
@@ -91,12 +93,12 @@ function escapeXml(text) {
 var defaultExec = promisify(execFile);
 async function sendDesktopNotification(title, message, options = {}) {
   const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args, { timeout: 5e3 }));
+  const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args, { timeout: 5e3, windowsHide: true }));
   try {
     if (platform === "win32") {
       const escapedTitle = escapeXml(title);
       const escapedMessage = escapeXml(message);
-      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual></toast>`;
+      const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual><audio silent="true"/></toast>`;
       const base64Xml = Buffer.from(xmlString, "utf-8").toString("base64");
       const psScript = `
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
@@ -141,7 +143,7 @@ import os2 from "node:os";
 var defaultExec2 = promisify2(execFile2);
 async function playNotificationSound(kind = "default", options = {}) {
   const platform = options.platform || os2.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec2(cmd, args, { timeout: 5e3 }));
+  const exec = options.execFn || ((cmd, args) => defaultExec2(cmd, args, { timeout: 5e3, windowsHide: true }));
   try {
     if (platform === "win32") {
       const soundType = kind === "alert" ? "[System.Media.SystemSounds]::Exclamation.Play()" : "[System.Media.SystemSounds]::Asterisk.Play()";
@@ -280,6 +282,9 @@ ${message}`
 
 // dsh-plugin-notifier/src/dispatcher.ts
 function formatDuration(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return "\u672A\u77E5";
+  }
   const seconds = Math.round(durationMs / 1e3);
   if (seconds < 60) {
     return `${seconds}\u79D2`;
@@ -333,7 +338,8 @@ var NotificationDispatcher = class {
     if (info.sessionTitle) {
       lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
     }
-    lines.push(`\u8F6E\u6B21: #${info.turn} \xB7 \u8017\u65F6: ${formatDuration(info.durationMs)}`);
+    const durationText = formatDuration(info.durationMs);
+    lines.push(`\u8F6E\u6B21: #${info.turn} \xB7 \u8017\u65F6: ${durationText}`);
     if (!isSuccess && info.reason.kind) {
       lines.push(`\u72B6\u6001: ${info.reason.kind}`);
     }
@@ -355,8 +361,10 @@ var NotificationDispatcher = class {
     if (info.sessionTitle) {
       lines.push(`\u4F1A\u8BDD: ${info.sessionTitle}`);
     }
-    const qList = info.questions.map((q, i) => info.questions.length > 1 ? `${i + 1}. ${q.question}` : q.question);
-    lines.push(qList.join("\n"));
+    if (info.questions && info.questions.length > 0) {
+      const qList = info.questions.map((q, i) => info.questions.length > 1 ? `${i + 1}. ${q.question}` : q.question);
+      lines.push(qList.join("\n"));
+    }
     const message = lines.join("\n");
     await this.dispatch(title, message, "user-questions/request", "warning", "alert");
   }
@@ -408,11 +416,17 @@ function apply(ctx, rawConfig, options) {
   function getSessionTitle(session) {
     if (!session) return void 0;
     try {
-      if (ctx.sessionTitle?.titleOf) {
-        return ctx.sessionTitle.titleOf(session);
+      if (typeof ctx.sessionTitle?.get === "function") {
+        const snap = ctx.sessionTitle.get(session);
+        if (snap?.title) return snap.title;
       }
-      if (ctx.sessionTitle?.title) {
-        return ctx.sessionTitle.title(session);
+      if (typeof ctx.sessionTitle?.titleOf === "function") {
+        const res = ctx.sessionTitle.titleOf(session);
+        if (res) return res;
+      }
+      if (typeof ctx.sessionTitle?.title === "function") {
+        const res = ctx.sessionTitle.title(session);
+        if (res) return res;
       }
       if (session.header?.cwd) {
         return session.header.cwd;
