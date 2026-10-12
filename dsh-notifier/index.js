@@ -71,40 +71,47 @@ var SCHEMA_DICT = {
   desktop: {
     type: "object",
     description: "\u684C\u9762\u901A\u77E5\u6E20\u9053\u914D\u7F6E\uFF08minDurationSeconds \u5DF2\u5E9F\u5F03\uFF0C\u4EC5\u4F5C\u5411\u540E\u517C\u5BB9\u56DE\u9000\uFF09",
+    // DSH 的 volatileForm() / isVolatilePath() 会无条件读取 node.meta.volatile，
+    // 且会递归遍历 dict 的每一个子节点，因此每个节点都必须带 meta，否则设置面板会崩溃。
+    meta: {},
     dict: {
-      enabled: { type: "boolean", description: "\u662F\u5426\u542F\u7528\u64CD\u4F5C\u7CFB\u7EDF\u539F\u751F\u684C\u9762\u5F39\u7A97\u901A\u77E5" },
-      minDurationSeconds: { type: "number", description: "[\u5DF2\u5E9F\u5F03] \u8BF7\u6539\u7528 events.minDurationSeconds" }
+      enabled: { type: "boolean", description: "\u662F\u5426\u542F\u7528\u64CD\u4F5C\u7CFB\u7EDF\u539F\u751F\u684C\u9762\u5F39\u7A97\u901A\u77E5", meta: {} },
+      minDurationSeconds: { type: "number", description: "[\u5DF2\u5E9F\u5F03] \u8BF7\u6539\u7528 events.minDurationSeconds", meta: {} }
     }
   },
   sound: {
     type: "object",
     description: "\u7CFB\u7EDF\u63D0\u793A\u97F3\u914D\u7F6E",
+    meta: {},
     dict: {
-      enabled: { type: "boolean", description: "\u662F\u5426\u5728\u901A\u77E5\u65F6\u64AD\u653E\u7CFB\u7EDF\u63D0\u793A\u97F3" }
+      enabled: { type: "boolean", description: "\u662F\u5426\u5728\u901A\u77E5\u65F6\u64AD\u653E\u7CFB\u7EDF\u63D0\u793A\u97F3", meta: {} }
     }
   },
   events: {
     type: "object",
     description: "\u4E8B\u4EF6\u5F00\u5173\u4E0E\u8FC7\u6EE4\u9608\u503C\u914D\u7F6E",
+    meta: {},
     dict: {
-      onTurnEnd: { type: "boolean", description: "\u4EFB\u52A1\u5B8C\u6210\u65F6\u662F\u5426\u901A\u77E5" },
-      onQuestion: { type: "boolean", description: "Agent \u63D0\u95EE\u7B49\u5F85\u56DE\u7B54\u65F6\u662F\u5426\u901A\u77E5" },
-      onApproval: { type: "boolean", description: "Agent \u7533\u8BF7\u6743\u9650\u5BA1\u6279\u65F6\u662F\u5426\u901A\u77E5" },
-      onError: { type: "boolean", description: "Agent \u6267\u884C\u5F02\u5E38\u65F6\u662F\u5426\u901A\u77E5" },
+      onTurnEnd: { type: "boolean", description: "\u4EFB\u52A1\u5B8C\u6210\u65F6\u662F\u5426\u901A\u77E5", meta: {} },
+      onQuestion: { type: "boolean", description: "Agent \u63D0\u95EE\u7B49\u5F85\u56DE\u7B54\u65F6\u662F\u5426\u901A\u77E5", meta: {} },
+      onApproval: { type: "boolean", description: "Agent \u7533\u8BF7\u6743\u9650\u5BA1\u6279\u65F6\u662F\u5426\u901A\u77E5", meta: {} },
+      onError: { type: "boolean", description: "Agent \u6267\u884C\u5F02\u5E38\u65F6\u662F\u5426\u901A\u77E5", meta: {} },
       minDurationSeconds: {
         type: "number",
-        description: "\u4EFB\u52A1\u5B8C\u6210\u901A\u77E5\u7684\u8017\u65F6\u8FC7\u6EE4\u9608\u503C\uFF08\u79D2\uFF09\uFF0C\u9ED8\u8BA4 5\uFF1B\u4E0E\u684C\u9762\u6E20\u9053\u5F00\u5173\u89E3\u8026"
+        description: "\u4EFB\u52A1\u5B8C\u6210\u901A\u77E5\u7684\u8017\u65F6\u8FC7\u6EE4\u9608\u503C\uFF08\u79D2\uFF09\uFF0C\u9ED8\u8BA4 5\uFF1B\u4E0E\u684C\u9762\u6E20\u9053\u5F00\u5173\u89E3\u8026",
+        meta: {}
       }
     }
   },
   webhook: {
     type: "object",
     description: "Webhook \u79BB\u673A\u63A8\u9001\u6E20\u9053\u914D\u7F6E",
+    meta: {},
     dict: {
-      enabled: { type: "boolean", description: "\u662F\u5426\u5F00\u542F Webhook \u8FDC\u7AEF\u63A8\u9001" },
-      provider: { type: "string", description: "\u6E20\u9053\u7C7B\u578B\uFF1Afeishu | dingtalk | wecom | bark | generic" },
-      url: { type: "string", description: "Webhook \u673A\u5668\u4EBA\u5730\u5740" },
-      secret: { type: "string", description: "\u7B7E\u540D\u5BC6\u94A5\uFF08\u53EF\u9009\uFF09" }
+      enabled: { type: "boolean", description: "\u662F\u5426\u5F00\u542F Webhook \u8FDC\u7AEF\u63A8\u9001", meta: {} },
+      provider: { type: "string", description: "\u6E20\u9053\u7C7B\u578B\uFF1Afeishu | dingtalk | wecom | bark | generic", meta: {} },
+      url: { type: "string", description: "Webhook \u673A\u5668\u4EBA\u5730\u5740", meta: {} },
+      secret: { type: "string", description: "\u7B7E\u540D\u5BC6\u94A5\uFF08\u53EF\u9009\uFF09", meta: {} }
     }
   }
 };
@@ -130,6 +137,8 @@ var Config = Object.assign(
     },
     type: "object",
     description: "DSH Notifier Configuration",
+    // 本插件不含 volatile 字段，缺失 meta 会让 DSH 的 volatileForm()/isVolatilePath() 抛 TypeError。
+    meta: {},
     dict: SCHEMA_DICT
   }
 );

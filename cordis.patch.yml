@@ -1,0 +1,4 @@
+# DeepSeek Harness Umbrella Plugins Bundle
+- insert:
+    - id: my-dsh-plugins
+      name: '@local/my-dsh-plugins'

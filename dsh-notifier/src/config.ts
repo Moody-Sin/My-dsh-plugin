@@ -132,40 +132,47 @@ const SCHEMA_DICT = {
   desktop: {
     type: 'object',
     description: '桌面通知渠道配置（minDurationSeconds 已废弃，仅作向后兼容回退）',
+    // DSH 的 volatileForm() / isVolatilePath() 会无条件读取 node.meta.volatile，
+    // 且会递归遍历 dict 的每一个子节点，因此每个节点都必须带 meta，否则设置面板会崩溃。
+    meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否启用操作系统原生桌面弹窗通知' },
-      minDurationSeconds: { type: 'number', description: '[已废弃] 请改用 events.minDurationSeconds' },
+      enabled: { type: 'boolean', description: '是否启用操作系统原生桌面弹窗通知', meta: {} },
+      minDurationSeconds: { type: 'number', description: '[已废弃] 请改用 events.minDurationSeconds', meta: {} },
     },
   },
   sound: {
     type: 'object',
     description: '系统提示音配置',
+    meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否在通知时播放系统提示音' },
+      enabled: { type: 'boolean', description: '是否在通知时播放系统提示音', meta: {} },
     },
   },
   events: {
     type: 'object',
     description: '事件开关与过滤阈值配置',
+    meta: {},
     dict: {
-      onTurnEnd: { type: 'boolean', description: '任务完成时是否通知' },
-      onQuestion: { type: 'boolean', description: 'Agent 提问等待回答时是否通知' },
-      onApproval: { type: 'boolean', description: 'Agent 申请权限审批时是否通知' },
-      onError: { type: 'boolean', description: 'Agent 执行异常时是否通知' },
+      onTurnEnd: { type: 'boolean', description: '任务完成时是否通知', meta: {} },
+      onQuestion: { type: 'boolean', description: 'Agent 提问等待回答时是否通知', meta: {} },
+      onApproval: { type: 'boolean', description: 'Agent 申请权限审批时是否通知', meta: {} },
+      onError: { type: 'boolean', description: 'Agent 执行异常时是否通知', meta: {} },
       minDurationSeconds: {
         type: 'number',
         description: '任务完成通知的耗时过滤阈值（秒），默认 5；与桌面渠道开关解耦',
+        meta: {},
       },
     },
   },
   webhook: {
     type: 'object',
     description: 'Webhook 离机推送渠道配置',
+    meta: {},
     dict: {
-      enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送' },
-      provider: { type: 'string', description: '渠道类型：feishu | dingtalk | wecom | bark | generic' },
-      url: { type: 'string', description: 'Webhook 机器人地址' },
-      secret: { type: 'string', description: '签名密钥（可选）' },
+      enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送', meta: {} },
+      provider: { type: 'string', description: '渠道类型：feishu | dingtalk | wecom | bark | generic', meta: {} },
+      url: { type: 'string', description: 'Webhook 机器人地址', meta: {} },
+      secret: { type: 'string', description: '签名密钥（可选）', meta: {} },
     },
   },
 };
@@ -192,6 +199,8 @@ export const Config: any = Object.assign(
     },
     type: 'object',
     description: 'DSH Notifier Configuration',
+    // 本插件不含 volatile 字段，缺失 meta 会让 DSH 的 volatileForm()/isVolatilePath() 抛 TypeError。
+    meta: {},
     dict: SCHEMA_DICT,
   }
 );

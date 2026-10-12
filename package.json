@@ -1,13 +1,29 @@
 {
-  "name": "my-dsh-plugins",
-  "version": "0.2.0",
+  "name": "@local/my-dsh-plugins",
+  "version": "0.3.0",
+  "description": "Umbrella bundle loader and configuration manager for local DSH plugins",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "workspaces": [
     "dsh-*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm test --workspaces"
+    "build:self": "node dsh-notifier/node_modules/esbuild/bin/esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
+    "build:plugins": "npm run build --workspaces",
+    "build": "npm run build:plugins && npm run build:self",
+    "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts"
   }
 }

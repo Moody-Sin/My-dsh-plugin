@@ -1,0 +1,26 @@
+{
+  "plugins": {
+    "notifier": {
+      "enabled": true,
+      "desktop": {
+        "enabled": true
+      },
+      "sound": {
+        "enabled": true
+      },
+      "events": {
+        "onTurnEnd": true,
+        "onQuestion": true,
+        "onApproval": true,
+        "onError": true,
+        "minDurationSeconds": 5
+      },
+      "webhook": {
+        "enabled": false,
+        "provider": "generic",
+        "url": "",
+        "secret": ""
+      }
+    }
+  }
+}

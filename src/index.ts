@@ -35,7 +35,7 @@ export function resolveProjectRoot(): string {
 export async function apply(ctx: any, config?: any): Promise<void> {
   const rootDir = resolveProjectRoot();
   const fileConfig = loadUmbrellaConfig(rootDir);
-  const mergedConfig = deepMerge(config || {}, fileConfig || {});
+  const mergedConfig = deepMerge(fileConfig, config || {});
   const scanned = scanPlugins(rootDir);
 
   for (const plugin of scanned) {
