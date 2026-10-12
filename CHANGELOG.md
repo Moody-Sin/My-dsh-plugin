@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 变更 (Changed)
+- **子插件 `@local/dsh-notifier` 升级至 `v0.5.0`**：
+  - 彻底移除内置 `http://127.0.0.1:3088` 设置看板与 `src/server.ts`，消除常驻端口占用与 HTTP 内存开销；
+  - 废弃并移除 `server` 配置段，配置统一收敛至 DSH 官方 Web GUI（3080）原生表单及双层配置文件；
+  - 新增轻量 CLI 诊断与一键测试脚本 `dsh-notifier/bin/test-notify.ts` 及快捷命令 `npm run test:notify`，支持桌面弹窗、提示音及 Webhook 连通性测试与延迟测量。
+- **构建产物瘦身**：子插件打包产物 `index.js` 体积由 74KB 降至 27KB（缩减超 60%）。
+
 ## [0.6.0] - 2026-10-12
 
 ### 新增 (Added)

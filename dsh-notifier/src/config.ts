@@ -33,14 +33,6 @@ export interface WebhookConfig {
   secret?: string;
 }
 
-/** 内置设置看板与一键测试服务配置。 */
-export interface ServerConfig {
-  /** 是否随插件启动设置看板服务，默认 `true`。 */
-  enabled: boolean;
-  /** 监听端口，默认 `3088`；被占用时会自动向后探测可用端口。 */
-  port: number;
-}
-
 export interface NotifierConfig {
   /**
    * 通知文案语言：`auto` 按环境变量判断，或强制 `zh`/`en`；默认 `auto`。
@@ -51,15 +43,10 @@ export interface NotifierConfig {
   sound: SoundConfig;
   events: EventsConfig;
   webhook: WebhookConfig;
-  /** 设置看板服务；可省略，`resolveConfig()` 保证返回对象中必定存在。 */
-  server?: ServerConfig;
 }
 
 /** 默认语言设置：`auto` 表示按运行环境自动判断中英文。 */
 const DEFAULT_LOCALE: LocaleSetting = 'auto';
-
-/** 设置看板默认端口，与 `src/server.ts` 的 `DEFAULT_PORT` 保持一致。 */
-export const DEFAULT_SERVER_PORT = 3088;
 
 export const DEFAULT_CONFIG: NotifierConfig = {
   locale: DEFAULT_LOCALE,
@@ -84,10 +71,6 @@ export const DEFAULT_CONFIG: NotifierConfig = {
     url: '',
     secret: '',
   },
-  server: {
-    enabled: true,
-    port: DEFAULT_SERVER_PORT,
-  },
 };
 
 const VALID_PROVIDERS = new Set<WebhookProvider>([
@@ -109,13 +92,6 @@ function normalizeDurationSeconds(value: unknown): number | undefined {
     : undefined;
 }
 
-/** 将候选值规整为合法端口（1~65535 整数），非法输入返回 undefined。 */
-function normalizePort(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  const port = Math.floor(value);
-  return port >= 1 && port <= 65535 ? port : undefined;
-}
-
 /** 校验语言配置，非法值回落 `auto`。 */
 function normalizeLocale(value: unknown): LocaleSetting {
   return typeof value === 'string' && VALID_LOCALES.has(value as LocaleSetting)
@@ -131,7 +107,6 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
       sound: { ...DEFAULT_CONFIG.sound },
       events: { ...DEFAULT_CONFIG.events },
       webhook: { ...DEFAULT_CONFIG.webhook },
-      server: { ...DEFAULT_CONFIG.server! },
     };
   }
 
@@ -140,7 +115,6 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
   const soundRaw = raw.sound && typeof raw.sound === 'object' ? raw.sound : {};
   const eventsRaw = raw.events && typeof raw.events === 'object' ? raw.events : {};
   const webhookRaw = raw.webhook && typeof raw.webhook === 'object' ? raw.webhook : {};
-  const serverRaw = raw.server && typeof raw.server === 'object' ? raw.server : {};
 
   const desktopMin = normalizeDurationSeconds(desktopRaw.minDurationSeconds);
   const eventsMin = normalizeDurationSeconds(eventsRaw.minDurationSeconds);
@@ -173,10 +147,6 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
       provider,
       url: typeof webhookRaw.url === 'string' ? webhookRaw.url : DEFAULT_CONFIG.webhook.url,
       secret: typeof webhookRaw.secret === 'string' ? webhookRaw.secret : DEFAULT_CONFIG.webhook.secret,
-    },
-    server: {
-      enabled: typeof serverRaw.enabled === 'boolean' ? serverRaw.enabled : DEFAULT_CONFIG.server!.enabled,
-      port: normalizePort(serverRaw.port) ?? DEFAULT_CONFIG.server!.port,
     },
   };
 }
@@ -246,15 +216,6 @@ const SCHEMA_DICT = {
         description: '签名密钥（可选）；telegram 渠道下作为 chat_id',
         meta: { volatile: true },
       },
-    },
-  },
-  server: {
-    type: 'object',
-    description: '内置设置看板与一键测试服务（改动需重启 DSH 后生效）',
-    meta: {},
-    dict: {
-      enabled: { type: 'boolean', description: '是否随插件启动本地设置看板服务，默认 true', meta: {} },
-      port: { type: 'number', description: '设置看板监听端口，默认 3088；被占用时自动向后探测', meta: {} },
     },
   },
 };

@@ -6,9 +6,8 @@
 
 | 文件 | 职责 |
 | :--- | :--- |
-| [`index.ts`](./index.ts) | Cordis 插件入口：注册四类监听器，解析会话标题，启停设置看板服务。 |
+| [`index.ts`](./index.ts) | Cordis 插件入口：注册四类监听器，解析会话标题，事件驱动通知派发。 |
 | [`config.ts`](./config.ts) | 配置模型、`DEFAULT_CONFIG`、`resolveConfig()` 归一化、Standard Schema `Config` 与设置面板 Schema。 |
-| [`server.ts`](./server.ts) | 零依赖内置 HTTP 设置看板与一键测试服务（路由、SPA 渲染、配置读写、端口自适应）。 |
 | [`dispatcher.ts`](./dispatcher.ts) | `NotificationDispatcher`：事件开关、耗时阈值过滤、i18n 文案、事件去重、多渠道并发派发。 |
 | [`channels/`](./channels/) | `desktop.ts`（桌面弹窗）、`sound.ts`（提示音）、`webhook.ts`（Webhook 推送）。 |
 | [`utils/xml.ts`](./utils/xml.ts) | `escapeXml()`：WinRT Toast XML 转义。 |
@@ -21,23 +20,7 @@
 - 标题依次尝试 `get(session).title` → `titleOf()` → `title()`，再回退 `session.header.cwd`，最终可为 `undefined`（少一行标题，不影响送达）。
 - 四类监听器：`session/event`（`turn/start` 记起始时间、`turn/end` 算耗时）、`user-questions/request` 与 `approval/request`（waterfall，非阻塞派发后必调 `next()`）、`agent/error`；回调内均 `try/catch` 兜底，绝不阻断主流程。
 - `turnStartTimes` 上限 `MAX_TRACKED_TURNS = 200`（超限淘汰最旧键），`ctx.on('dispose')` 时清空。
-- 启动时若 `server.enabled !== false` 则调用 `startSettingsServer()`，成功后经 logger 输出 `[dsh-notifier] 设置看板已就绪: <url>`；启动失败只告警，**绝不影响通知能力**。
-- `ctx.on('dispose')` 中调用 `stopSettingsServer()` 平稳关停服务，防止热重载反复进出 `apply` 造成端口与句柄泄漏。
-- `resolveLogger()` 的兜底实现不额外添加前缀，保证「有无 Cordis logger」两种情况下日志文本完全一致。
-
-## server.ts
-
-零依赖 HTTP 设置看板，全部基于 Node.js 原生 `node:http`，**不引入任何第三方 npm 包**（由 `tests/manifest.test.ts` 对打包产物做 import/require 静态断言）。
-
-- **端口自适应**：`startSettingsServer()` 先用期望端口监听，遇 `EADDRINUSE` 自动向后探测（最多 `MAX_PORT_PROBE = 20` 个）；`strictPort: true` 时直接失败；端口传 `0` 时经 `server.address()` 回读系统分配的真实端口。
-- **句柄不钉死宿主**：监听句柄统一 `unref()`，与根总线对 `fs.watch` / 定时器的做法一致；仅剩该句柄时进程仍能正常退出。
-- **模块级单例**：`activeHandle` / `activeServer` 保存当前实例，`startSettingsServer()` 重复调用会先关停旧实例，`stopSettingsServer()` 可无参重复调用。
-- **路由**：`GET /`（SPA）、`GET /api/config`、`POST /api/config`、`POST /api/test`，其余 404。请求体上限 `MAX_BODY_BYTES = 64KB`（超限 413），非法 JSON 回 400。
-- **SPA 渲染**（`renderSettingsPage()`）：内联 CSS/JS，`prefers-color-scheme` 深色自适应，中英双语词典 `UI_TEXT`；初始配置经 `JSON.stringify` 后转义 `<`/`>`/`&` 注入脚本，杜绝 `</script>` 提前闭合。
-- **配置读写**：`resolveProjectRoot()` 向上查找含 `plugins.config.json` 或包名 `@local/my-dsh-plugins` 的目录；`writeJsonConfig()` 先写 `.tmp` 再 `rename`，避免热重载读到半截内容。
-- **机密隔离**：`SECRET_PATHS`（`webhook.secret`）仅在勾选时写入 `plugins.config.local.json`，基础配置中不留凭据；`MANAGED_NON_SECRET_PATHS` 与 `FORM_MANAGED_PATHS` 界定看板托管字段。
-- **保存策略**：`POST /api/config` 只叠加**表单托管字段**到既有配置，`server.port` 等表单未暴露的字段不会被 `resolveConfig` 补出的默认值静默重置。
-- **测试分派**（`runChannelTest()`）：`desktop` / `sound` 走真实渠道函数；`webhook` 使用请求携带的**临时配置**并**强制 `enabled: true`**（否则关闭状态下点测试会静默无动作），返回 `latencyMs` 与结果状态。
+- 纯事件驱动模型：不占用任何网络端口，零常驻 HTTP 服务。
 
 ## config.ts
 
@@ -45,8 +28,12 @@
 - 耗时阈值优先级：`events.minDurationSeconds` → 旧版 `desktop.minDurationSeconds`（已废弃，仅作回退）→ `5`，**与桌面渠道开关彻底解耦**；`provider` 经白名单校验，非法值回落 `generic`。
 - `Config` 同时携带 `Symbol.for('schemastery')` 与 `~standard`（同步 `validate`），并暴露 `toJSON()` 供设置面板渲染。
 - **`SCHEMA_DICT` 每个节点都必须带 `meta: {}`** —— DSH 的 `volatileForm()` / `isVolatilePath()` 会无条件递归读取 `node.meta.volatile`，缺失会让面板崩溃。
-- 可编辑节点（`locale`、桌面/声音开关、事件开关与阈值、Webhook 全字段）标注 `meta: { volatile: true }`；`server` 段与废弃字段 `desktop.minDurationSeconds` 保持 `meta: {}`（改端口需重启，不属热更新范畴）。
-- **`volatile` 的已知局限**：本插件 `~standard.validate` 返回普通对象而非 `Volatile` 引用，DSH `cordis-plugin-loader` 的 `_commitVolatile()` 收集不到引用时会直接判定「无需重启」。因此经 **DSH 官方设置面板**编辑不会生效；本插件的配置请走设置看板（写 `plugins.config.json`，由根总线热重载）。
+- 可编辑节点（`locale`、桌面/声音开关、事件开关与阈值、Webhook 全字段）标注 `meta: { volatile: true }`。
+
+## bin/test-notify.ts (CLI 诊断工具)
+
+- 独立命令行工具，经 `npm run test:notify` 执行，无需启动 DSH 即可直接验证当前主机的通知连通性与响应耗时。
+- 支持 `--type=desktop|sound|webhook|all` 及临时覆盖参数 `--url`、`--provider`、`--secret`。
 
 ## dispatcher.ts 与 channels/
 

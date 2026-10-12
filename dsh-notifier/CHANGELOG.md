@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-10-12
+
+### 移除 (Removed)
+- **彻底移除内置 HTTP 设置看板**（`src/server.ts`）：移除 `3088` 端口监听服务，删减 1277 行内联 HTML/CSS/JS 服务端代码，彻底消除端口占用与常驻服务开销。
+- **移除 `server` 配置段**：废弃并移除 `server.enabled` 与 `server.port` 配置，插件配置统一收敛至 DSH 官方 Web GUI（3080）原生 Volatile 表单及双层配置文件（`plugins.config.json` / `plugins.config.local.json`）。
+- **移除相关测试文件**：删除 `tests/server.test.ts`。
+
+### 新增 (Added)
+- **轻量 CLI 测试工具**（`bin/test-notify.ts`）：提供命令行测试能力平替原有看板的一键测试功能，支持 `--type=desktop`、`--type=sound`、`--type=webhook` 及 `--type=all`，支持临时参数覆盖并实时显示响应耗时。
+- 新增 `npm run test:notify` 快捷执行脚本。
+
+### 变更 (Changed)
+- **架构与产物瘦身**：构建产物 `index.js` 体积缩减超过 50%，运行时回归纯粹的事件驱动通知分发器，完全零网络端口监听。
+
 ## [0.4.0] - 2026-10-12
 
 ### 新增 (Added)

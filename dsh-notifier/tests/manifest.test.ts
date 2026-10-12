@@ -70,14 +70,13 @@ test('manifest: 打包产物零第三方依赖，仅使用 Node 内置模块', (
 
   assert.deepEqual(bareImports, [], `打包产物不得 import 第三方模块: ${bareImports.join(', ')}`);
   assert.deepEqual(requires, [], `打包产物不得 require 第三方模块: ${requires.join(', ')}`);
-  assert.match(bundle, /node:http/, '设置服务必须使用原生 node:http');
 });
 
 test('manifest: 插件版本与 CHANGELOG 保持同步', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
   const changelog = fs.readFileSync(path.join(pkgDir, 'CHANGELOG.md'), 'utf-8');
 
-  assert.equal(pkg.version, '0.4.0');
+  assert.equal(pkg.version, '0.5.0');
   assert.ok(changelog.includes(`## [${pkg.version}]`), 'CHANGELOG 必须包含当前版本条目');
 });
 

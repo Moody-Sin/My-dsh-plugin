@@ -134,7 +134,7 @@
 | 插件名称 | 目录 | 版本 | 简介 |
 | :--- | :--- | :--- | :--- |
 | **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.6.0` | 聚合插件总线 Loader，提供自动扫描、双层配置、环境变量插值、配置热重载、隔离装载与 **DSH 原生设置表单（Schemastery Schema）**。 |
-| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.4.0` | 跨平台系统原生桌面弹窗、提示音、飞书/钉钉/企微/Bark/Telegram/Discord/通用 Webhook 离机通知及内置 Web 设置看板。 |
+| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.5.0` | 跨平台系统原生桌面弹窗、提示音、飞书/钉钉/企微/Bark/Telegram/Discord/通用 Webhook 离机通知及 CLI 连通性诊断工具（零常驻端口）。 |
 
 ## 开发指南
 
@@ -145,7 +145,8 @@
 - 执行构建：`npm run build`（自动构建所有子插件并打包根 Loader）。
 - 清理产物：`npm run clean`（删除根与子插件的 `index.js` 构建产物）。
 - 类型检查：`npm run typecheck`（同时检查根 Loader 与所有子插件）。
-- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **88 项** + 通知子插件 **104 项**，共 192 项）。
+- 渠道诊断与测试：`npm run test:notify`（通过 CLI 一键测试桌面通知、提示音与 Webhook 连通性并测量耗时）。
+- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **88 项** + 通知子插件 **81 项**，共 169 项）。
 
 ## 维护日志
 
@@ -153,7 +154,7 @@
 
 ## 维护者
 
-[@DeepSeek-Harness-User](https://github.com)
+[@Moody-Sin](https://github.com/Moody-Sin)
 
 ## 使用许可
 

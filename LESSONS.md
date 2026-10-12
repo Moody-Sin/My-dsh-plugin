@@ -24,3 +24,6 @@
 - **volatile 引用协议由 `Symbol.for('cosmokit.volatile.write')` 承载，不依赖模块实例**：因此无需引入 `@deepseek-ai/cosmokit` 依赖即可与官方实现互通（`isVolatile` / `volatileEntries` / `updateVolatile` 全部可用）。
 - **引用必须在透传给子插件前解引用**：子插件做的是 `typeof x === 'boolean'` 之类的原始值判断，收到 `{ get() {} }` 会全部落空、配置整体回落默认值。解引用要深入 `deepMerge` 与 `clonePlain`，否则句柄会悄悄混进配置树。
 - **`loader/volatile-update` 是 `emit` 而非 `waterfall`**：监听器**不得**声明第三个 `next` 参数，否则 `next` 会被误当作变更数据。
+
+## 6. 插件职责收敛与端口解耦
+- **后台通知类插件避免常驻 HTTP 服务**：插件若非必须提供对外 Webhook Receiver 等被动接收能力，不应在初始化时默认占用 TCP 端口。辅助类调试/连通性验证工具应收敛为按需触发的 CLI 脚本（如 `bin/test-notify.ts`），既避免端口冲突与常驻开销，又将配置入口唯一收敛至宿主原生表单。

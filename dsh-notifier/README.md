@@ -11,7 +11,7 @@
 - [背景](#背景)
 - [特性](#特性)
 - [安装与接入](#安装与接入)
-- [设置看板与一键测试](#设置看板与一键测试)
+- [CLI 连通性诊断与一键测试](#cli-连通性诊断与一键测试)
 - [配置说明](#配置说明)
 - [支持渠道](#支持渠道)
 - [多语言](#多语言)
@@ -37,7 +37,7 @@
 - **主流 Webhook 离机推送**：支持 **飞书**、**钉钉**、**企业微信**、**Bark (iOS)**、**Telegram**、**Discord** 以及 **通用 JSON Webhook**，手机锁屏秒级触达。Bark 渠道支持点击通知直接跳转 DSH 控制台，高优先级事件具备自动网络重试。
 - **智能防打扰**：支持 `events.minDurationSeconds` 耗时过滤，短时日常问答不触发完成弹窗，且与桌面通知开关彻底解耦；内置 200ms 相同事件去重窗口，网络抖动或事件重放不会重复轰炸下游渠道。
 - **高可用与非阻塞**：完全异步派发，网络波动与超时绝不影响 Agent 主流程执行。
-- **内置设置看板与一键测试**：随插件启动一个**零依赖**的本地 Web 看板（基于 Node.js 原生 `node:http`，不引入任何第三方包），可图形化编辑全部配置并提供弹窗 / 提示音 / Webhook 的一键自测，详见[设置看板与一键测试](#设置看板与一键测试)。
+- **CLI 连通性诊断与一键测试**：提供轻量 CLI 工具（`npm run test:notify`），无需常驻 HTTP 服务即可一键测试弹窗 / 提示音 / Webhook 连通性与延迟，详见[CLI 连通性诊断与一键测试](#cli-连通性诊断与一键测试)。
 
 ## 安装与接入
 
@@ -72,49 +72,27 @@ dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-notifier
           enabled: false
           provider: 'feishu'
           url: 'https://open.feishu.cn/open-apis/bot/v2/hook/xxxx'
-        server:
-          enabled: true
-          port: 3088
 ```
 
-## 设置看板与一键测试
+## CLI 连通性诊断与一键测试
 
-插件默认随 DSH 启动一个轻量本地设置服务，打开浏览器即可图形化配置与自测：
+插件提供轻量 CLI 诊断工具，无需常驻任何 HTTP 服务或占用系统端口，即可在命令行一键测试各通知渠道并测量耗时：
 
-```text
-[dsh-notifier] 设置看板已就绪: http://127.0.0.1:3088
+```bash
+# 测试全部渠道（桌面弹窗 + 系统提示音 + 已配置的 Webhook）
+npm run test:notify
+
+# 仅测试系统提示音
+npm run test:notify -- --type=sound
+
+# 仅测试桌面弹窗
+npm run test:notify -- --type=desktop
+
+# 临时指定 Webhook 地址测试（无需先修改配置文件）
+npm run test:notify -- --type=webhook --url=https://open.feishu.cn/...
 ```
 
-- **零依赖**：完全基于 Node.js 原生 `node:http`，单文件内联 CSS/JS，**不引入任何第三方 npm 包**，也不引用任何外部资源。
-- **端口自适应**：默认 `3088`；被占用时自动向后探测可用端口，并在日志中输出真实地址。
-- **仅本机可访问**：固定监听 `127.0.0.1`，不对外暴露。
-- **可关闭**：`server.enabled: false` 时不启动；`server.port` 可改端口。
-
-### 看板功能
-
-| 卡片 | 内容 |
-| :--- | :--- |
-| 通用与语言 | `locale` 选择 `auto` / `zh` / `en` |
-| 系统桌面与声音 | 桌面通知开关、系统提示音开关 |
-| 任务与事件过滤 | Turn 完成、等待提问、权限审批、错误异常、耗时阈值 |
-| Webhook 离机推送 | 开关、提供商、URL、Secret |
-| 一键测试区 | 【发送测试弹窗】【播放测试提示音】【测试 Webhook 发送】 |
-| 保存选项 | 【保存配置】+ 【将机密凭据保存至本地私有覆盖】复选框 |
-
-- **一键测试区**无需先保存：Webhook 测试直接使用表单当前填写的值，并实时展示**发送耗时**与结果状态。
-- 勾选【将机密凭据保存至本地私有覆盖】后，`webhook.secret` 写入已 gitignore 的 `plugins.config.local.json`，其余字段写入 `plugins.config.json`。
-- 保存后由聚合总线热重载，**约 300ms 自动生效，无需重启 DSH**。
-
-### HTTP 接口
-
-| 方法 | 路径 | 说明 |
-| :--- | :--- | :--- |
-| `GET` | `/` | 返回单页设置应用（内联 CSS/JS，中英双语、深色/浅色自适应） |
-| `GET` | `/api/config` | 读取当前配置（合并结果、原始切片与默认值） |
-| `POST` | `/api/config` | 保存配置；`{ config, saveSecretsLocally }` |
-| `POST` | `/api/test` | 一键测试：`{ type: 'desktop' \| 'sound' \| 'webhook', ... }`，返回 `{ success, message, latencyMs }` |
-
-> **已知限制**：本插件的 `Config` 使用普通对象而非 `Volatile` 引用，因此通过 **DSH 官方设置面板**编辑本插件字段时不会触发重启、改动不会生效。请统一使用上方 `http://127.0.0.1:3088` 看板修改配置（经 `plugins.config.json` 热重载，即时生效）。
+诊断工具会自动读取 `plugins.config.json` 与 `plugins.config.local.json`，并支持通过 `--url`、`--provider`、`--secret` 传入临时参数直接覆盖。
 
 ## 配置说明
 
@@ -133,8 +111,6 @@ dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-notifier
 | `webhook.provider` | `string` | `'generic'` | Webhook 渠道类型：`feishu` \| `dingtalk` \| `wecom` \| `bark` \| `telegram` \| `discord` \| `generic` |
 | `webhook.url` | `string` | `''` | Webhook 机器人 Webhook URL |
 | `webhook.secret` | `string` | `''` | 签名密钥（可选）；`telegram` 渠道下作为 `chat_id` |
-| `server.enabled` | `boolean` | `true` | 是否随插件启动本地设置看板与一键测试服务 |
-| `server.port` | `number` | `3088` | 看板监听端口；被占用时自动向后探测可用端口（改动需重启 DSH 后生效） |
 
 > **性能提示**：Windows 下 `desktop.enabled` 与 `sound.enabled` 同时为真时，插件只启动 **一次** `powershell.exe`，由 Toast XML 的 `<audio>` 节点同时完成弹窗与发声；只有 `desktop.enabled: false && sound.enabled: true` 时才会独立调用声音进程。
 
@@ -201,7 +177,7 @@ dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-notifier
 
 ## 维护者
 
-[@DeepSeek-Harness-User](https://github.com)
+[@Moody-Sin](https://github.com/Moody-Sin)
 
 ## 更新日志
 

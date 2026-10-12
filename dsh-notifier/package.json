@@ -1,13 +1,17 @@
 {
   "name": "@local/dsh-notifier",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cross-platform desktop and webhook notifications for DeepSeek Harness",
   "private": true,
   "type": "module",
   "main": "./index.js",
+  "bin": {
+    "dsh-notifier-test": "./bin/test-notify.ts"
+  },
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:notify": "node --experimental-strip-types bin/test-notify.ts",
     "typecheck": "tsc --noEmit"
   },
   "exports": {
@@ -17,6 +21,7 @@
   },
   "files": [
     "index.js",
+    "bin/*",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg"

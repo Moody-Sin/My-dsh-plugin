@@ -30,6 +30,7 @@
     "build:plugins": "npm run build --workspaces",
     "build": "npm run build:plugins && npm run build:self",
     "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts",
+    "test:notify": "node --experimental-strip-types dsh-notifier/bin/test-notify.ts",
     "typecheck": "npm run typecheck --workspaces && tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
