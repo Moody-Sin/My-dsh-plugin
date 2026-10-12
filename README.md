@@ -73,16 +73,18 @@
 
 | 插件名称 | 目录 | 版本 | 简介 |
 | :--- | :--- | :--- | :--- |
-| **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.3.0` | 聚合插件总线 Loader，提供自动扫描、双层配置与隔离装载。 |
-| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.2.0` | 跨平台系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/通用 Webhook 离机通知插件。 |
+| **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.4.0` | 聚合插件总线 Loader，提供自动扫描、双层配置与隔离装载。 |
+| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.2.1` | 跨平台系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/通用 Webhook 离机通知插件。 |
 
 ## 开发指南
 
 - 遵循 [约定式提交 (Conventional Commits)](https://www.conventionalcommits.org/zh-hans/)。
 - 遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 - 所有新插件必须分配在以 **`dsh-*`** 命名的独立目录下，配备完整的 `package.json`、`README.md` 与单元测试。
+- **首次使用必须先执行 `npm install`**：本仓库采用 npm workspaces，构建与类型检查工具链的 `node_modules/.bin` 由根 `node_modules` 提供，克隆仓库后必须先安装一次，否则 `build` / `typecheck` 均无法运行。这是 npm workspaces 的固有约束（依赖被提升到根，子包副本会被删除）。
 - 执行构建：`npm run build`（自动构建所有子插件并打包根 Loader）。
-- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件）。
+- 类型检查：`npm run typecheck`（同时检查根 Loader 与所有子插件）。
+- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **32 项** + 通知子插件 **57 项**，共 89 项）。
 
 ## 维护日志
 

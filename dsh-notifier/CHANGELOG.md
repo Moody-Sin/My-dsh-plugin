@@ -2,6 +2,19 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-10-12
+
+### 修复 (Fixed)
+- **会话标题永远取不到**：`inject` 未声明 `sessionTitle`，而 Cordis 的 `ctx` 是 Proxy——读取未声明 `inject` 的服务属性会**直接抛错**，可选链 `ctx.sessionTitle?.` 挡不住该抛错，异常被 `catch` 吞掉后连 `session.header.cwd` 兜底分支都走不到，导致通知正文永远缺失会话名。已改用 Cordis 公开的安全读取 API `ctx.get('sessionTitle')`。
+- 删除指向不存在文件的 `types` 字段（`./lib/index.d.ts` 从未生成）。
+
+### 变更 (Changed)
+- **`sessionTitle` 刻意不写进 `inject`**：实测若声明，该服务缺失时 Cordis 会把插件 fiber 永久挂在 PENDING，导致**一条通知都发不出**；改用 `ctx.get` 后插件照常激活，只是通知没有标题。对旁路通知插件而言「没标题但能通知」严格优于「彻底不通知」。`inject` 保持 `['sessions']` 不变。
+- 补充注释说明 `dispatcher.ts` 中后两层 `??` 回退链仅为兼容绕过 `resolveConfig` 直接构造配置对象的调用方（正常路径下不可达）。
+
+### 测试 (Tests)
+- 新增 5 项用例，覆盖：模拟 Cordis Proxy 的 mock 上下文、`ctx.get` 取标题、`sessionTitle` 缺失时回退 `session.header.cwd`、无标题时不抛错、服务完全缺失时仍照常派发通知。测试套件扩充至 57 项。
+
 ## [0.2.0] - 2026-10-12
 
 ### 新增 (Added)

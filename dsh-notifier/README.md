@@ -27,7 +27,7 @@
 ## 特性
 
 - **全平台系统原生桌面通知**：
-  - Windows：调用 WinRT 原生 Toast 通知（带大标题、会话名、图标，无需额外 npm 依赖）。
+  - Windows：调用 WinRT 原生 Toast 通知（带大标题与会话名，无需额外 npm 依赖）。会话名取自 DSH 的 `sessionTitle` 服务；该服务不可用时回退显示会话工作目录（`session.header.cwd`），两者皆无时才省略标题，不影响通知送达。
   - macOS：调用 `osascript` 系统通知。
   - Linux：调用 `notify-send` 系统通知。
 - **系统音效提示**：关键事件触发清脆系统提示音（Windows SystemSounds / macOS Glass 音效）。
@@ -124,4 +124,4 @@ dsh plugin --profile web add D:/Project/My-dsh-plugin/dsh-notifier
 
 ## 使用许可
 
-[MIT](./package.json)
+[MIT](../LICENSE)

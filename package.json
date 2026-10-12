@@ -1,6 +1,6 @@
 {
   "name": "@local/my-dsh-plugins",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Umbrella bundle loader and configuration manager for local DSH plugins",
   "private": true,
   "type": "module",
