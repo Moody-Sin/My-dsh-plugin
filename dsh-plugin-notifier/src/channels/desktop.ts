@@ -16,7 +16,7 @@ export async function sendDesktopNotification(
   options: DesktopOptions = {}
 ): Promise<boolean> {
   const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args) as any);
+  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000 }) as any);
 
   try {
     if (platform === 'win32') {
@@ -40,15 +40,24 @@ $appId = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\power
       await exec('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]);
       return true;
     } else if (platform === 'darwin') {
-      const script = `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`;
-      await exec('osascript', ['-e', script]);
+      await exec('osascript', [
+        '-e',
+        'on run argv',
+        '-e',
+        'display notification (item 1 of argv) with title (item 2 of argv)',
+        '-e',
+        'end run',
+        '--',
+        message,
+        title,
+      ]);
       return true;
     } else if (platform === 'linux') {
       await exec('notify-send', [title, message]);
       return true;
     }
     return false;
-  } catch (err) {
+  } catch {
     // Graceful containment
     return false;
   }

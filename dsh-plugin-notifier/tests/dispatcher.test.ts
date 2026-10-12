@@ -135,3 +135,36 @@ test('dispatcher: respects event disabled switches', async () => {
 
   assert.equal(called, false, 'Must not dispatch when event type is disabled in config');
 });
+
+test('dispatcher: onError triggers error alert notification and formats message', async () => {
+  let errorTitle = '';
+  let errorMsg = '';
+  let errorKind = '';
+
+  const config = resolveConfig({
+    events: { onError: true },
+  });
+
+  const dispatcher = new NotificationDispatcher(config, {
+    desktopFn: async (t, msg) => {
+      errorTitle = t;
+      errorMsg = msg;
+      return true;
+    },
+    soundFn: async (kind) => {
+      errorKind = kind;
+      return true;
+    },
+    webhookFn: async () => true,
+  });
+
+  await dispatcher.onError({
+    error: new Error('Database connection failed'),
+    sessionTitle: 'Crash Test',
+  });
+
+  assert.ok(errorTitle.includes('异常'));
+  assert.ok(errorMsg.includes('Crash Test'));
+  assert.ok(errorMsg.includes('Database connection failed'));
+  assert.equal(errorKind, 'alert');
+});

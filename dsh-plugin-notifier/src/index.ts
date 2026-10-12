@@ -10,11 +10,20 @@ export interface ApplyOptions {
   dispatcher?: NotificationDispatcher;
 }
 
+const MAX_TRACKED_TURNS = 200;
+
 export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): void {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
 
   const turnStartTimes = new Map<string, number>();
+
+  // Ensure cleanup on plugin reload / unmount
+  if (typeof ctx.on === 'function') {
+    ctx.on('dispose', () => {
+      turnStartTimes.clear();
+    });
+  }
 
   function getSessionTitle(session: any): string | undefined {
     if (!session) return undefined;
@@ -41,13 +50,20 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
     if (event.type === 'turn/start') {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || 'default'}:${turn}`;
+      // Capacity eviction protection
+      if (turnStartTimes.size >= MAX_TRACKED_TURNS) {
+        const oldestKey = turnStartTimes.keys().next().value;
+        if (oldestKey) turnStartTimes.delete(oldestKey);
+      }
       turnStartTimes.set(key, Date.now());
     } else if (event.type === 'turn/end') {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || 'default'}:${turn}`;
-      const startTime = turnStartTimes.get(key) ?? Date.now();
+      const startTime = turnStartTimes.get(key);
       turnStartTimes.delete(key);
-      const durationMs = Date.now() - startTime;
+
+      // If start wasn't observed (e.g. HMR reload), assume long task (Infinity) rather than 0
+      const durationMs = startTime !== undefined ? Date.now() - startTime : Infinity;
       const sessionTitle = getSessionTitle(session);
 
       void dispatcher.onTurnEnd({

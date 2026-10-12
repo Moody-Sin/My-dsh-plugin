@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { WebhookConfig } from '../config.ts';
 
 export interface WebhookPayload {
@@ -10,6 +11,18 @@ export interface WebhookPayload {
 
 export interface WebhookOptions {
   fetchFn?: typeof fetch;
+}
+
+function generateFeishuSign(secret: string, timestamp: number): string {
+  const stringToSign = `${timestamp}\n${secret}`;
+  return crypto.createHmac('sha256', stringToSign).update('').digest('base64');
+}
+
+function generateDingTalkSign(secret: string, timestamp: number): string {
+  const stringToSign = `${timestamp}\n${secret}`;
+  return encodeURIComponent(
+    crypto.createHmac('sha256', secret).update(stringToSign).digest('base64')
+  );
 }
 
 export async function sendWebhookNotification(
@@ -27,6 +40,7 @@ export async function sendWebhookNotification(
   }
 
   try {
+    let targetUrl = config.url;
     let body: any;
     const { title, message, event, kind = 'info', metadata } = payload;
 
@@ -48,10 +62,24 @@ export async function sendWebhookNotification(
             ],
           },
         };
+
+        if (config.secret) {
+          const timestamp = Math.floor(Date.now() / 1000);
+          const sign = generateFeishuSign(config.secret, timestamp);
+          body.timestamp = String(timestamp);
+          body.sign = sign;
+        }
         break;
       }
 
       case 'dingtalk': {
+        if (config.secret) {
+          const timestamp = Date.now();
+          const sign = generateDingTalkSign(config.secret, timestamp);
+          const sep = targetUrl.includes('?') ? '&' : '?';
+          targetUrl = `${targetUrl}${sep}timestamp=${timestamp}&sign=${sign}`;
+        }
+
         body = {
           msgtype: 'markdown',
           markdown: {
@@ -95,17 +123,18 @@ export async function sendWebhookNotification(
       }
     }
 
-    const response = await fetchImpl(config.url, {
+    const response = await fetchImpl(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
     });
 
     return response.ok;
-  } catch (err) {
-    // Contain all network exceptions
+  } catch {
+    // Contain all network exceptions (timeout, DNS, connection refusal)
     return false;
   }
 }

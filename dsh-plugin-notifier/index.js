@@ -84,14 +84,14 @@ import os from "node:os";
 // dsh-plugin-notifier/src/utils/xml.ts
 function escapeXml(text) {
   if (!text) return "";
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 // dsh-plugin-notifier/src/channels/desktop.ts
 var defaultExec = promisify(execFile);
 async function sendDesktopNotification(title, message, options = {}) {
   const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args));
+  const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args, { timeout: 5e3 }));
   try {
     if (platform === "win32") {
       const escapedTitle = escapeXml(title);
@@ -112,15 +112,24 @@ $appId = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\power
       await exec("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]);
       return true;
     } else if (platform === "darwin") {
-      const script = `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`;
-      await exec("osascript", ["-e", script]);
+      await exec("osascript", [
+        "-e",
+        "on run argv",
+        "-e",
+        "display notification (item 1 of argv) with title (item 2 of argv)",
+        "-e",
+        "end run",
+        "--",
+        message,
+        title
+      ]);
       return true;
     } else if (platform === "linux") {
       await exec("notify-send", [title, message]);
       return true;
     }
     return false;
-  } catch (err) {
+  } catch {
     return false;
   }
 }
@@ -132,7 +141,7 @@ import os2 from "node:os";
 var defaultExec2 = promisify2(execFile2);
 async function playNotificationSound(kind = "default", options = {}) {
   const platform = options.platform || os2.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec2(cmd, args));
+  const exec = options.execFn || ((cmd, args) => defaultExec2(cmd, args, { timeout: 5e3 }));
   try {
     if (platform === "win32") {
       const soundType = kind === "alert" ? "[System.Media.SystemSounds]::Exclamation.Play()" : "[System.Media.SystemSounds]::Asterisk.Play()";
@@ -148,12 +157,25 @@ async function playNotificationSound(kind = "default", options = {}) {
       return true;
     }
     return false;
-  } catch (err) {
+  } catch {
     return false;
   }
 }
 
 // dsh-plugin-notifier/src/channels/webhook.ts
+import crypto from "node:crypto";
+function generateFeishuSign(secret, timestamp) {
+  const stringToSign = `${timestamp}
+${secret}`;
+  return crypto.createHmac("sha256", stringToSign).update("").digest("base64");
+}
+function generateDingTalkSign(secret, timestamp) {
+  const stringToSign = `${timestamp}
+${secret}`;
+  return encodeURIComponent(
+    crypto.createHmac("sha256", secret).update(stringToSign).digest("base64")
+  );
+}
 async function sendWebhookNotification(config, payload, options = {}) {
   if (!config.enabled || !config.url) {
     return false;
@@ -163,6 +185,7 @@ async function sendWebhookNotification(config, payload, options = {}) {
     return false;
   }
   try {
+    let targetUrl = config.url;
     let body;
     const { title, message, event, kind = "info", metadata } = payload;
     switch (config.provider) {
@@ -183,9 +206,21 @@ async function sendWebhookNotification(config, payload, options = {}) {
             ]
           }
         };
+        if (config.secret) {
+          const timestamp = Math.floor(Date.now() / 1e3);
+          const sign = generateFeishuSign(config.secret, timestamp);
+          body.timestamp = String(timestamp);
+          body.sign = sign;
+        }
         break;
       }
       case "dingtalk": {
+        if (config.secret) {
+          const timestamp = Date.now();
+          const sign = generateDingTalkSign(config.secret, timestamp);
+          const sep = targetUrl.includes("?") ? "&" : "?";
+          targetUrl = `${targetUrl}${sep}timestamp=${timestamp}&sign=${sign}`;
+        }
         body = {
           msgtype: "markdown",
           markdown: {
@@ -229,15 +264,16 @@ ${message}`
         break;
       }
     }
-    const response = await fetchImpl(config.url, {
+    const response = await fetchImpl(targetUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5e3)
     });
     return response.ok;
-  } catch (err) {
+  } catch {
     return false;
   }
 }
@@ -359,10 +395,16 @@ var NotificationDispatcher = class {
 // dsh-plugin-notifier/src/index.ts
 var name = "notifier";
 var inject = ["sessions"];
+var MAX_TRACKED_TURNS = 200;
 function apply(ctx, rawConfig, options) {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
   const turnStartTimes = /* @__PURE__ */ new Map();
+  if (typeof ctx.on === "function") {
+    ctx.on("dispose", () => {
+      turnStartTimes.clear();
+    });
+  }
   function getSessionTitle(session) {
     if (!session) return void 0;
     try {
@@ -384,13 +426,17 @@ function apply(ctx, rawConfig, options) {
     if (event.type === "turn/start") {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || "default"}:${turn}`;
+      if (turnStartTimes.size >= MAX_TRACKED_TURNS) {
+        const oldestKey = turnStartTimes.keys().next().value;
+        if (oldestKey) turnStartTimes.delete(oldestKey);
+      }
       turnStartTimes.set(key, Date.now());
     } else if (event.type === "turn/end") {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || "default"}:${turn}`;
-      const startTime = turnStartTimes.get(key) ?? Date.now();
+      const startTime = turnStartTimes.get(key);
       turnStartTimes.delete(key);
-      const durationMs = Date.now() - startTime;
+      const durationMs = startTime !== void 0 ? Date.now() - startTime : Infinity;
       const sessionTitle = getSessionTitle(session);
       void dispatcher.onTurnEnd({
         turn,
