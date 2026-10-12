@@ -508,23 +508,29 @@ function apply(ctx, rawConfig, options) {
   }
   function getSessionTitle(session) {
     if (!session) return void 0;
+    let service;
     try {
-      if (typeof ctx.sessionTitle?.get === "function") {
-        const snap = ctx.sessionTitle.get(session);
+      service = typeof ctx.get === "function" ? ctx.get("sessionTitle") : ctx.sessionTitle;
+    } catch {
+      service = void 0;
+    }
+    try {
+      if (typeof service?.get === "function") {
+        const snap = service.get(session);
         if (snap?.title) return snap.title;
       }
-      if (typeof ctx.sessionTitle?.titleOf === "function") {
-        const res = ctx.sessionTitle.titleOf(session);
+      if (typeof service?.titleOf === "function") {
+        const res = service.titleOf(session);
         if (res) return res;
       }
-      if (typeof ctx.sessionTitle?.title === "function") {
-        const res = ctx.sessionTitle.title(session);
+      if (typeof service?.title === "function") {
+        const res = service.title(session);
         if (res) return res;
-      }
-      if (session.header?.cwd) {
-        return session.header.cwd;
       }
     } catch {
+    }
+    if (session.header?.cwd) {
+      return session.header.cwd;
     }
     return void 0;
   }

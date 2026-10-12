@@ -2,6 +2,10 @@ import { resolveConfig, Config, type NotifierConfig } from './config.ts';
 import { NotificationDispatcher } from './dispatcher.ts';
 
 export const name = 'notifier';
+// sessions 为历史兼容保留，插件实际不使用会话存储。
+// sessionTitle 故意不写进 inject：它是可选增强而非硬依赖，一旦声明，服务缺失时
+// Cordis 会把插件 fiber 永久挂在 PENDING，导致一条通知都发不出。
+// 这里改由 getSessionTitle 用 ctx.get 按需安全读取，缺失时优雅降级为无标题。
 export const inject = ['sessions'];
 export { Config };
 export type { NotifierConfig };
@@ -27,24 +31,37 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
 
   function getSessionTitle(session: any): string | undefined {
     if (!session) return undefined;
+    // Cordis 的 ctx 是 Proxy：读取未声明在 inject 中的服务属性会直接抛异常，
+    // 可选链挡不住该抛错（历史 bug 正是因此吞掉了标题并连 cwd 兜底都走不到）。
+    // ctx.get('服务名') 是 Cordis 公开的安全读取 API，服务缺失时返回 undefined 而不抛错。
+    let service: any;
     try {
-      if (typeof ctx.sessionTitle?.get === 'function') {
-        const snap = ctx.sessionTitle.get(session);
+      service = typeof ctx.get === 'function' ? ctx.get('sessionTitle') : ctx.sessionTitle;
+    } catch {
+      // ctx.get 不可用（部分 mock 环境）时静默降级，继续走后续兜底
+      service = undefined;
+    }
+
+    // 兼容不同版本 DSH 的会话标题服务形态：主路径为 get(session).title
+    try {
+      if (typeof service?.get === 'function') {
+        const snap = service.get(session);
         if (snap?.title) return snap.title;
       }
-      if (typeof ctx.sessionTitle?.titleOf === 'function') {
-        const res = ctx.sessionTitle.titleOf(session);
+      if (typeof service?.titleOf === 'function') {
+        const res = service.titleOf(session);
         if (res) return res;
       }
-      if (typeof ctx.sessionTitle?.title === 'function') {
-        const res = ctx.sessionTitle.title(session);
+      if (typeof service?.title === 'function') {
+        const res = service.title(session);
         if (res) return res;
-      }
-      if (session.header?.cwd) {
-        return session.header.cwd;
       }
     } catch {
-      // ignore
+      // 服务探测失败时静默降级，继续走 cwd 兜底
+    }
+
+    if (session.header?.cwd) {
+      return session.header.cwd;
     }
     return undefined;
   }
