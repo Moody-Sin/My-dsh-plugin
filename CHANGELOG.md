@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-12
+
+### 修复 (Fixed)
+- 修复 `@local/dsh-plugin-notifier` 在 DSH 中加载失败（`fiberPhase: 'failed'`）的问题：为插件 `Config` 补充 Standard Schema 规范的 `['~standard']` 校验接口与 `toJSON()` 方法，兼容 Cordis v4 的 `runtime.Config['~standard'].validate(config)` 配置校验流程。
+
 ## [0.1.0] - 2026-10-12
 
 ### 新增 (Added)

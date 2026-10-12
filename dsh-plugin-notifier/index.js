@@ -65,6 +65,25 @@ var Config = Object.assign(
   },
   {
     [/* @__PURE__ */ Symbol.for("schemastery")]: true,
+    "~standard": {
+      version: 1,
+      vendor: "schemastery",
+      validate(data) {
+        return { value: resolveConfig(data) };
+      }
+    },
+    toJSON() {
+      return {
+        type: "object",
+        description: "DSH Notifier Configuration",
+        dict: {
+          desktop: { type: "object" },
+          sound: { type: "object" },
+          events: { type: "object" },
+          webhook: { type: "object" }
+        }
+      };
+    },
     type: "object",
     description: "DSH Notifier Configuration",
     dict: {

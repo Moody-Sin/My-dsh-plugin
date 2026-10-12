@@ -103,6 +103,10 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
 
 /**
  * Cordis / Schemastery compatible schema representation.
+ *
+ * Cordis v4 在启动插件前会调用 `runtime.Config['~standard'].validate(config)`
+ * 完成配置校验，因此这里必须提供符合 Standard Schema 规范的 `~standard` 属性，
+ * 否则会抛出 `Cannot read properties of undefined (reading 'validate')`。
  */
 export const Config: any = Object.assign(
   function validateConfig(data: unknown) {
@@ -110,6 +114,25 @@ export const Config: any = Object.assign(
   },
   {
     [Symbol.for('schemastery')]: true,
+    '~standard': {
+      version: 1,
+      vendor: 'schemastery',
+      validate(data: unknown) {
+        return { value: resolveConfig(data) };
+      },
+    },
+    toJSON() {
+      return {
+        type: 'object',
+        description: 'DSH Notifier Configuration',
+        dict: {
+          desktop: { type: 'object' },
+          sound: { type: 'object' },
+          events: { type: 'object' },
+          webhook: { type: 'object' },
+        },
+      };
+    },
     type: 'object',
     description: 'DSH Notifier Configuration',
     dict: {

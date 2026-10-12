@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-10-12
+
+### 修复 (Fixed)
+- 修复插件在 DSH 中加载失败（`fiberPhase: 'failed'`）的问题：为 `Config` 补充 Standard Schema 规范要求的 `['~standard']` 属性（`version: 1`、`vendor: 'schemastery'`、同步 `validate`），避免 Cordis 调用 `runtime.Config['~standard'].validate(config)` 时抛出 `Cannot read properties of undefined (reading 'validate')`。
+- 为 `Config` 补充 `toJSON()` 方法，使其在配置序列化与展示时输出可读的 schema 描述。
+
+### 测试 (Tests)
+- 新增 `Config['~standard']` 接口契约、同步校验返回值（无 `issues`）与空输入回退默认值、`toJSON()` 可序列化结构共 4 项单元测试。
+
 ## [0.1.0] - 2026-10-12
 
 ### 新增 (Added)
