@@ -9,6 +9,7 @@ import {
   deepMerge,
   getPluginConfig,
   loadUmbrellaConfig,
+  resolveVolatileRefs,
   type UmbrellaLoaderConfig,
 } from './config.ts';
 import { scanPlugins, type ScannedPlugin } from './scanner.ts';
@@ -164,18 +165,32 @@ async function mountPlugin(
 }
 
 /**
- * 聚合插件入口：扫描并装载工作区内所有 `dsh-*` 子插件，并监听配置文件变更。
+ * 聚合插件入口：扫描并装载工作区内所有 `dsh-*` 子插件，并监听配置文件与设置表单变更。
  *
  * 配置优先级为「`plugins.config.local.json` > `plugins.config.json` > DSH Profile Patch 传入配置」；
  * 单插件失败只告警，不影响其余插件装载。
+ *
+ * `config` 由 Cordis 经 `Config['~standard'].validate()` 校验后传入，
+ * 其中 Schema 声明的叶子字段已被包装为 **volatile 引用**。引用在宿主保存设置表单时
+ * 被 `updateVolatile()` **就地**刷新，因此这里持有的一次性 `config` 对象始终能读到最新值。
  */
 export async function apply(ctx: any, config?: any): Promise<void> {
   const rootDir = resolveProjectRoot();
   const logger = resolveLogger(ctx);
-  const fileConfig = loadUmbrellaConfig(rootDir);
-  // 文件配置为最高权威，必须覆盖 DSH Profile Patch 传入的配置。
-  const mergedConfig = deepMerge(config || {}, fileConfig);
   const scanned = scanPlugins(rootDir);
+
+  /**
+   * 把 Profile 传入配置解引用后与文件配置融合。
+   *
+   * volatile 引用必须在融合前解包：引用是运行时句柄而非配置值，
+   * 直接透传给子插件会让其 `typeof x === 'boolean'` 之类的判断全部落空、
+   * 配置整体回落默认值。
+   */
+  const resolveLatest = (): UmbrellaLoaderConfig =>
+    // 文件配置为最高权威，必须覆盖 DSH Profile Patch 传入的配置。
+    deepMerge(resolveVolatileRefs(config) || {}, loadUmbrellaConfig(rootDir));
+
+  const mergedConfig = resolveLatest();
 
   // 扫描结果为空意味着加载器什么都不会做，必须显式告警以便定位根目录错误。
   // 此分支先于未知键校验返回：无任何子插件时逐个罗列「未识别插件项」只会淹没真正的病因。
@@ -213,11 +228,20 @@ export async function apply(ctx: any, config?: any): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let active = true;
 
-  const reload = async (): Promise<void> => {
+  /**
+   * 按最新配置重新协调所有子插件的装载状态。
+   *
+   * 两条触发路径共用本函数，避免逻辑各自漂移：
+   * 1. 配置文件被编辑（`fs.watch`）；
+   * 2. DSH 设置表单被保存（`loader/volatile-update`）。
+   *
+   * @param source 触发来源，仅用于日志区分，便于用户定位「到底是谁改的配置」
+   */
+  const reload = async (source: 'file' | 'settings'): Promise<void> => {
     // dispose 与重载存在竞态：宿主已卸载后绝不能再补挂插件。
     if (!active) return;
 
-    const latestConfig = deepMerge(config || {}, loadUmbrellaConfig(rootDir));
+    const latestConfig = resolveLatest();
 
     for (const plugin of scanned) {
       const key = plugin.pluginKey;
@@ -245,7 +269,11 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     }
 
     currentConfig = latestConfig;
-    logger.info(`配置文件变更已生效，共 ${scanned.length} 个子插件参与热重载`);
+    logger.info(
+      source === 'settings'
+        ? `设置表单变更已生效，共 ${scanned.length} 个子插件参与热重载`
+        : `配置文件变更已生效，共 ${scanned.length} 个子插件参与热重载`,
+    );
   };
 
   try {
@@ -256,7 +284,7 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
-        void reload();
+        void reload('file');
       }, CONFIG_WATCH_DEBOUNCE_MS);
       // 监听器不得阻止宿主进程退出：DSH 生命周期由宿主决定，插件只做被动响应。
       timer.unref?.();
@@ -270,6 +298,23 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     });
   } catch (error) {
     logger.warn('配置文件热重载监听启动失败，配置变更需重启后生效:', error);
+  }
+
+  // ── DSH 设置表单联动 ────────────────────────────────────────────────────
+  // DSH 的 `LoaderEntry._commitVolatile()` 在判定「仅 volatile 字段变更」后，
+  // 会**就地**刷新各 volatile 引用的快照（`updateVolatile()`），然后发出本事件，
+  // 而**不会**重启插件。因此这里必须显式监听，否则表单保存后子插件永远收不到新值。
+  //
+  // 事件由宿主以 `fiber.ctx.emit(filtered, 'loader/volatile-update', paths)` 发出，
+  // 其中 filter 只放行 `hook.ctx.fiber === 本插件 fiber` 的监听器 ——
+  // 因此在 `apply()` 内直接注册即可精确收到**自己**的变更，不会误收其它插件的事件。
+  try {
+    ctx.on?.('loader/volatile-update', (paths: unknown) => {
+      logger.info(`设置表单更新了配置字段: ${JSON.stringify(paths)}`);
+      void reload('settings');
+    });
+  } catch (error) {
+    logger.warn('设置表单联动监听注册失败，表单变更需重启后生效:', error);
   }
 
   // 宿主卸载插件时必须注销监听，否则句柄与定时器会长期驻留形成内存泄漏。

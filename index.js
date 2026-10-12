@@ -9,10 +9,246 @@ import path from "node:path";
 var BASE_CONFIG_FILENAME = "plugins.config.json";
 var LOCAL_CONFIG_FILENAME = "plugins.config.local.json";
 var ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}/g;
+var SCHEMASTER_SYMBOL = /* @__PURE__ */ Symbol.for("schemastery");
+var VOLATILE_WRITE_SYMBOL = /* @__PURE__ */ Symbol.for("cosmokit.volatile.write");
+function isVolatileRef(value) {
+  return typeof value === "object" && value !== null && VOLATILE_WRITE_SYMBOL in value;
+}
+function snapshotVolatile(value, ancestors = /* @__PURE__ */ new Set()) {
+  if (typeof value === "function") throw new TypeError("volatile \u914D\u7F6E\u4E0D\u5141\u8BB8\u5305\u542B\u51FD\u6570");
+  if (value === null || typeof value !== "object") return value;
+  if (ancestors.has(value)) throw new TypeError("volatile \u914D\u7F6E\u4E0D\u5141\u8BB8\u5305\u542B\u5FAA\u73AF\u5F15\u7528");
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Object.freeze(value.map((item) => snapshotVolatile(item, ancestors)));
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("volatile \u914D\u7F6E\u53EA\u5141\u8BB8\u666E\u901A\u5BF9\u8C61\u6216\u6570\u7EC4");
+    }
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, snapshotVolatile(item, ancestors)])
+      )
+    );
+  } finally {
+    ancestors.delete(value);
+  }
+}
+function createVolatileRef(value) {
+  let current = snapshotVolatile(value);
+  return Object.freeze({
+    get: () => current,
+    [VOLATILE_WRITE_SYMBOL]: (next) => {
+      current = next;
+    }
+  });
+}
+function resolveVolatileRefs(value) {
+  if (isVolatileRef(value)) return resolveVolatileRefs(value.get());
+  if (Array.isArray(value)) return value.map(resolveVolatileRefs);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, resolveVolatileRefs(item)])
+    );
+  }
+  return value;
+}
+var SCHEMA_DICT = {
+  plugins: {
+    type: "object",
+    description: "\u5B50\u63D2\u4EF6\u914D\u7F6E\u96C6\u5408",
+    meta: {},
+    dict: {
+      notifier: {
+        type: "object",
+        description: "\u901A\u77E5\u63D2\u4EF6\u914D\u7F6E",
+        meta: {},
+        dict: {
+          enabled: {
+            type: "boolean",
+            description: "\u542F\u7528\u901A\u77E5\u63D2\u4EF6",
+            meta: { volatile: true }
+          },
+          locale: {
+            type: "string",
+            description: "\u8BED\u8A00\u8BBE\u7F6E (auto | zh | en)",
+            meta: { volatile: true }
+          },
+          desktop: {
+            type: "object",
+            description: "\u7CFB\u7EDF\u684C\u9762\u5F39\u7A97",
+            meta: {},
+            dict: {
+              enabled: {
+                type: "boolean",
+                description: "\u5F00\u542F\u684C\u9762\u5F39\u7A97",
+                meta: { volatile: true }
+              }
+            }
+          },
+          sound: {
+            type: "object",
+            description: "\u7CFB\u7EDF\u63D0\u793A\u97F3",
+            meta: {},
+            dict: {
+              enabled: {
+                type: "boolean",
+                description: "\u5F00\u542F\u7CFB\u7EDF\u63D0\u793A\u97F3",
+                meta: { volatile: true }
+              }
+            }
+          },
+          events: {
+            type: "object",
+            description: "\u4E8B\u4EF6\u901A\u77E5\u4E0E\u8017\u65F6\u8FC7\u6EE4",
+            meta: {},
+            dict: {
+              onTurnEnd: {
+                type: "boolean",
+                description: "\u4EFB\u52A1\u5B8C\u6210\u65F6\u901A\u77E5",
+                meta: { volatile: true }
+              },
+              onQuestion: {
+                type: "boolean",
+                description: "\u7B49\u5F85\u63D0\u95EE\u65F6\u901A\u77E5",
+                meta: { volatile: true }
+              },
+              onApproval: {
+                type: "boolean",
+                description: "\u6743\u9650\u5BA1\u6279\u65F6\u901A\u77E5",
+                meta: { volatile: true }
+              },
+              onError: {
+                type: "boolean",
+                description: "\u4EFB\u52A1\u5F02\u5E38\u65F6\u901A\u77E5",
+                meta: { volatile: true }
+              },
+              minDurationSeconds: {
+                type: "number",
+                description: "\u4EFB\u52A1\u5B8C\u6210\u8FC7\u6EE4\u9608\u503C (\u79D2)",
+                meta: { volatile: true }
+              }
+            }
+          },
+          webhook: {
+            type: "object",
+            description: "Webhook \u79BB\u673A\u63A8\u9001",
+            meta: {},
+            dict: {
+              enabled: {
+                type: "boolean",
+                description: "\u5F00\u542F Webhook \u63A8\u9001",
+                meta: { volatile: true }
+              },
+              provider: {
+                type: "string",
+                description: "\u6E20\u9053\u7C7B\u578B (feishu | dingtalk | wecom | bark | telegram | discord | generic)",
+                meta: { volatile: true }
+              },
+              url: {
+                type: "string",
+                description: "Webhook \u673A\u5668\u4EBA\u5730\u5740",
+                meta: { volatile: true }
+              },
+              secret: {
+                type: "string",
+                description: "\u7B7E\u540D\u5BC6\u94A5 / Chat ID (\u53EF\u9009)",
+                meta: { volatile: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+};
+function cloneSchemaNode(node) {
+  const copy = {
+    type: node.type,
+    meta: { ...node.meta }
+  };
+  if (node.description !== void 0) copy.description = node.description;
+  if (node.dict) {
+    copy.dict = Object.fromEntries(
+      Object.entries(node.dict).map(([key, child]) => [key, cloneSchemaNode(child)])
+    );
+  }
+  return copy;
+}
+function attachToJSON(node) {
+  for (const child of Object.values(node.dict ?? {})) attachToJSON(child);
+  node.toJSON = () => cloneSchemaNode(node);
+  return node;
+}
+attachToJSON({
+  type: "object",
+  description: "DSH \u805A\u5408\u603B\u7EBF\u914D\u7F6E",
+  meta: {},
+  dict: SCHEMA_DICT
+});
+var SCHEMA_ROOT = {
+  type: "object",
+  description: "DSH \u805A\u5408\u603B\u7EBF\u914D\u7F6E",
+  meta: {},
+  dict: SCHEMA_DICT
+};
+function materializeVolatile(value, node) {
+  if (node.meta?.volatile) {
+    try {
+      return createVolatileRef(value);
+    } catch (error) {
+      console.warn(`[my-dsh-plugins] \u914D\u7F6E\u5B57\u6BB5\u5FEB\u7167\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u4E0D\u53EF\u70ED\u6539: ${String(error)}`);
+      return value;
+    }
+  }
+  if (node.type === "object" && node.dict) {
+    const source = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const result = {};
+    for (const [key, item] of Object.entries(source)) {
+      const child = node.dict[key];
+      result[key] = child ? materializeVolatile(item, child) : clonePlain(item);
+    }
+    for (const [key, child] of Object.entries(node.dict)) {
+      if (!(key in result)) result[key] = materializeVolatile(void 0, child);
+    }
+    return result;
+  }
+  return clonePlain(value);
+}
+function validateConfig(value) {
+  const source = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return materializeVolatile(source, SCHEMA_ROOT);
+}
+var Config = Object.assign(
+  function validatePluginConfig(data) {
+    return validateConfig(data);
+  },
+  {
+    [SCHEMASTER_SYMBOL]: true,
+    "~standard": {
+      version: 1,
+      vendor: "schemastery",
+      validate(value) {
+        return { value: validateConfig(value) };
+      }
+    },
+    /** 返回 plain schema 结构（**深拷贝**），而非 schemastery 原生的 `{ uid, refs }` 引用图 */
+    toJSON() {
+      return cloneSchemaNode(SCHEMA_ROOT);
+    },
+    type: SCHEMA_ROOT.type,
+    description: SCHEMA_ROOT.description,
+    meta: { ...SCHEMA_ROOT.meta },
+    dict: SCHEMA_DICT
+  }
+);
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function clonePlain(value) {
+  if (isVolatileRef(value)) return clonePlain(value.get());
   if (!isPlainObject(value)) return value;
   const copy = {};
   for (const [key, item] of Object.entries(value)) {
@@ -63,15 +299,6 @@ function getPluginConfig(config, pluginKey) {
     config: rest
   };
 }
-var Config = {
-  "~standard": {
-    version: 1,
-    vendor: "schemastery",
-    validate(value) {
-      return { value: isPlainObject(value) ? value : {} };
-    }
-  }
-};
 
 // src/scanner.ts
 import fs2 from "node:fs";
@@ -212,9 +439,12 @@ async function mountPlugin(ctx, plugin, pluginConfig, logger) {
 async function apply(ctx, config) {
   const rootDir = resolveProjectRoot();
   const logger = resolveLogger(ctx);
-  const fileConfig = loadUmbrellaConfig(rootDir);
-  const mergedConfig = deepMerge(config || {}, fileConfig);
   const scanned = scanPlugins(rootDir);
+  const resolveLatest = () => (
+    // 文件配置为最高权威，必须覆盖 DSH Profile Patch 传入的配置。
+    deepMerge(resolveVolatileRefs(config) || {}, loadUmbrellaConfig(rootDir))
+  );
+  const mergedConfig = resolveLatest();
   if (scanned.length === 0) {
     logger.warn(
       `\u672A\u5728\u6839\u76EE\u5F55 ${rootDir} \u4E0B\u626B\u63CF\u5230\u4EFB\u4F55 dsh-* \u5B50\u63D2\u4EF6\uFF0C\u8BF7\u68C0\u67E5\u662F\u5426\u5DF2\u5B89\u88C5\u5B50\u63D2\u4EF6\uFF0C\u6216\u9879\u76EE\u6839\u76EE\u5F55\u5B9A\u4F4D\u662F\u5426\u6709\u8BEF\u3002`
@@ -237,9 +467,9 @@ async function apply(ctx, config) {
   let watcher;
   let timer;
   let active = true;
-  const reload = async () => {
+  const reload = async (source) => {
     if (!active) return;
-    const latestConfig = deepMerge(config || {}, loadUmbrellaConfig(rootDir));
+    const latestConfig = resolveLatest();
     for (const plugin of scanned) {
       const key = plugin.pluginKey;
       const wasEnabled = getPluginConfig(currentConfig, key).enabled;
@@ -260,7 +490,9 @@ async function apply(ctx, config) {
       }
     }
     currentConfig = latestConfig;
-    logger.info(`\u914D\u7F6E\u6587\u4EF6\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D`);
+    logger.info(
+      source === "settings" ? `\u8BBE\u7F6E\u8868\u5355\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D` : `\u914D\u7F6E\u6587\u4EF6\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D`
+    );
   };
   try {
     watcher = fs3.watch(rootDir, (_eventType, filename) => {
@@ -268,7 +500,7 @@ async function apply(ctx, config) {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = void 0;
-        void reload();
+        void reload("file");
       }, CONFIG_WATCH_DEBOUNCE_MS);
       timer.unref?.();
     });
@@ -278,6 +510,14 @@ async function apply(ctx, config) {
     });
   } catch (error) {
     logger.warn("\u914D\u7F6E\u6587\u4EF6\u70ED\u91CD\u8F7D\u76D1\u542C\u542F\u52A8\u5931\u8D25\uFF0C\u914D\u7F6E\u53D8\u66F4\u9700\u91CD\u542F\u540E\u751F\u6548:", error);
+  }
+  try {
+    ctx.on?.("loader/volatile-update", (paths) => {
+      logger.info(`\u8BBE\u7F6E\u8868\u5355\u66F4\u65B0\u4E86\u914D\u7F6E\u5B57\u6BB5: ${JSON.stringify(paths)}`);
+      void reload("settings");
+    });
+  } catch (error) {
+    logger.warn("\u8BBE\u7F6E\u8868\u5355\u8054\u52A8\u76D1\u542C\u6CE8\u518C\u5931\u8D25\uFF0C\u8868\u5355\u53D8\u66F4\u9700\u91CD\u542F\u540E\u751F\u6548:", error);
   }
   ctx.on?.("dispose", () => {
     active = false;

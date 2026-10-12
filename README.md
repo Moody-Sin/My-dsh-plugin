@@ -9,6 +9,7 @@
 - [背景](#背景)
 - [核心架构：聚合总线模式](#核心架构聚合总线模式)
 - [统一配置指南](#统一配置指南)
+- [原生设置表单（DSH Web GUI）](#原生设置表单dsh-web-gui)
 - [插件列表](#插件列表)
 - [开发指南](#开发指南)
 - [维护日志](#维护日志)
@@ -87,6 +88,37 @@
 - **未知插件告警**：配置中若存在无法对应到任何已扫描子插件的键（改名、拼写错误或未安装），加载器会输出中文告警并列出当前已检测到的子插件名，避免配置被静默忽略。
 - **配置热重载**：保存 `plugins.config.json` 或 `plugins.config.local.json` 后约 300ms 自动生效 —— 启用 / 禁用的子插件会被动态挂载或销毁，持续启用的子插件则原地热更新参数，**无需重启 DSH**。
 
+## 原生设置表单（DSH Web GUI）
+
+在 DSH Web GUI 的 **「插件」→「@local/my-dsh-plugins」详情页**中，表单由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**，无需任何手写 UI 代码。
+
+表单覆盖 `plugins.notifier` 下的 **13 个可热改字段**：
+
+| 分组 | 字段 |
+| :--- | :--- |
+| 基础 | `enabled`（启用通知插件）、`locale`（语言设置 auto / zh / en） |
+| 系统桌面弹窗 | `desktop.enabled` |
+| 系统提示音 | `sound.enabled` |
+| 事件通知 | `events.onTurnEnd`、`events.onQuestion`、`events.onApproval`、`events.onError`、`events.minDurationSeconds` |
+| Webhook 离机推送 | `webhook.enabled`、`webhook.provider`、`webhook.url`、`webhook.secret` |
+
+保存表单后经 DSH 原生 **volatile 引用**通道**免重启**即时生效：宿主就地刷新引用快照并发出 `loader/volatile-update`，加载器随即按新配置重新协调各子插件的装载状态。
+
+> **⚠️ 配置优先级与表单的关系（务必知悉）**
+>
+> 优先级为「`plugins.config.local.json` > `plugins.config.json` > 表单 / Profile 传入值」，**文件层权威最高**。
+>
+> 因此**凡是在 `plugins.config.json` 中已声明的字段，表单改动都会被文件值盖回**。例如默认配置已声明 `notifier.locale`，那么在表单里修改 `locale` 不会生效。
+>
+> 若希望某字段由表单托管，请把它从 `plugins.config.json` 中移出（可仅保留在 `plugins.config.local.json` 作为本地默认，或直接留空交由 Schema 默认值兜底）。尚未在配置文件中声明的字段（表单仍会渲染，因为 Schema 已声明）可正常实时生效。
+
+实现要点（均从 DSH 官方源码逐行核对）：
+
+- `Config` 同时满足 **Schemastery**（`type` / `dict` / `meta` / `toJSON()` / `Symbol.for('schemastery')`）与 **Standard Schema v1**（`'~standard'` 同步返回 `{ value }`）双契约。
+- `toJSON()` **返回深拷贝**：DSH 投影引擎会就地 `delete node.meta.volatile`，返回共享引用会让表单在第二次渲染时整片消失。
+- 为 Schema 声明的**每个** volatile 路径（含用户未填写的）无条件建立 volatile 引用：DSH 的 `_commitVolatile()` 若发现引用集合为空会**立即返回**，导致整次保存被静默丢弃。
+- volatile 引用协议基于 `Symbol.for('cosmokit.volatile.write')`，**不引入 `@deepseek-ai/cosmokit` 依赖**即可与官方实现完全互通。
+
 ## Bundle 资源清单
 
 根包同时是 DSH 官方 Bundle，随包提供图标与本地化文案，供宿主界面展示：
@@ -101,8 +133,8 @@
 
 | 插件名称 | 目录 | 版本 | 简介 |
 | :--- | :--- | :--- | :--- |
-| **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.5.0` | 聚合插件总线 Loader，提供自动扫描、双层配置、环境变量插值、配置热重载与隔离装载。 |
-| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.3.0` | 跨平台系统原生桌面弹窗、提示音及飞书/钉钉/企微/Bark/Telegram/Discord/通用 Webhook 离机通知插件。 |
+| **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.6.0` | 聚合插件总线 Loader，提供自动扫描、双层配置、环境变量插值、配置热重载、隔离装载与 **DSH 原生设置表单（Schemastery Schema）**。 |
+| **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.4.0` | 跨平台系统原生桌面弹窗、提示音、飞书/钉钉/企微/Bark/Telegram/Discord/通用 Webhook 离机通知及内置 Web 设置看板。 |
 
 ## 开发指南
 
@@ -113,7 +145,7 @@
 - 执行构建：`npm run build`（自动构建所有子插件并打包根 Loader）。
 - 清理产物：`npm run clean`（删除根与子插件的 `index.js` 构建产物）。
 - 类型检查：`npm run typecheck`（同时检查根 Loader 与所有子插件）。
-- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **69 项** + 通知子插件 **80 项**，共 149 项）。
+- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **88 项** + 通知子插件 **104 项**，共 192 项）。
 
 ## 维护日志
 

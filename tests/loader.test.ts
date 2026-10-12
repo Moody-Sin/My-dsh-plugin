@@ -129,6 +129,8 @@ function createMockCtx(
 ) {
   const mounted: MountRecord[] = [];
   const disposeHandlers: Array<() => void> = [];
+  /** 事件登记表：`ctx.on` 注册，`ctx.emit` 触发（复刻 Cordis 的 emit 语义） */
+  const listeners = new Map<string, Array<(...args: any[]) => void>>();
 
   const defaultFiber = () => {
     const fiber: any = {
@@ -152,8 +154,15 @@ function createMockCtx(
       mounted.push({ pluginDef, pluginConfig, fiber });
       return fiber;
     },
-    on: (event: string, handler: () => void) => {
+    on: (event: string, handler: any) => {
       if (event === 'dispose') disposeHandlers.push(handler);
+      const bucket = listeners.get(event) ?? [];
+      bucket.push(handler);
+      listeners.set(event, bucket);
+    },
+    // 复刻 DSH 在 `loader/volatile-update` 上的调用形态（宿主以 emit 通知，非 waterfall）
+    emit: (event: string, ...args: any[]) => {
+      for (const handler of listeners.get(event) ?? []) handler(...args);
     },
   };
   // 仅在显式传入时挂载 logger：默认场景必须走 console 兜底路径
@@ -737,5 +746,150 @@ test('热重载: 子插件重载异常被捕获，不拖垮宿主', async (t) =>
   assert.ok(
     logs.some((line) => line.includes('notifier') && line.includes('热重载失败')),
     `热重载异常必须告警，实际: ${JSON.stringify(logs)}`,
+  );
+});
+
+// ── DSH 原生设置表单联动（方案 A）────────────────────────────────────────
+
+/** 模拟 DSH `updateVolatile()`：把新快照灌进插件持有的**旧**引用 */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write');
+
+function commitVolatile(target: any, source: any): void {
+  target[VOLATILE_WRITE](source.get());
+}
+
+test('设置表单: 传入配置的 volatile 引用被解引用后再透传给子插件', async (t) => {
+  const { rootDir, mod } = await makeIsolatedRoot({ plugins: {} });
+  const harness = createMockCtx();
+  t.after(() => {
+    harness.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  // 复刻 Cordis：先用 Config['~standard'].validate 物化，再把结果交给 apply
+  const profileConfig = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true, locale: 'en', webhook: { url: 'https://hook.example.com' } } },
+  }).value;
+
+  await mod.apply(harness.ctx, profileConfig);
+
+  const conf = harness.mounted[0].pluginConfig;
+  assert.equal(conf.locale, 'en', '引用必须被解开为原始值与子插件 Schema 对齐');
+  assert.equal(conf.webhook.url, 'https://hook.example.com');
+  assert.equal(
+    typeof conf.webhook.secret,
+    'undefined',
+    '未配置字段解引用后为 undefined，严禁把 get 句柄泄漏给子插件',
+  );
+  assert.equal(
+    JSON.stringify(conf).includes('"get"'),
+    false,
+    '透传配置必须完全可序列化，不得残留 volatile 句柄',
+  );
+});
+
+test('设置表单: 宿主刷新 volatile 快照并触发 loader/volatile-update 后热更新生效', async (t) => {
+  const { rootDir, mod } = await makeIsolatedRoot({ plugins: {} });
+  const harness = createMockCtx();
+  t.after(() => {
+    harness.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  const profileConfig = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true, webhook: { url: 'https://old.example.com' } } },
+  }).value;
+
+  await mod.apply(harness.ctx, profileConfig);
+  assert.equal(harness.mounted[0].pluginConfig.webhook.url, 'https://old.example.com');
+  const fiber = harness.mounted[0].fiber;
+
+  // 复刻 DSH 保存表单的完整链路：
+  // 1) 新配置经同一 Schema 校验并建立全新引用；
+  // 2) updateVolatile() 把新快照就地灌进插件持有的旧引用；
+  // 3) 宿主发出 loader/volatile-update 通知（不重启插件）。
+  const next = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true, webhook: { url: 'https://new.example.com' } } },
+  }).value;
+  commitVolatile(
+    profileConfig.plugins.notifier.webhook.url,
+    next.plugins.notifier.webhook.url,
+  );
+  harness.ctx.emit('loader/volatile-update', [['plugins', 'notifier', 'webhook', 'url']]);
+
+  await waitFor(() => fiber.updates.length > 0, { label: '表单保存后触发 fiber.update' });
+
+  assert.equal(
+    fiber.updates.at(-1).webhook.url,
+    'https://new.example.com',
+    '必须把宿主刷新后的最新配置交给子插件',
+  );
+  assert.equal(harness.mounted.length, 1, '表单更新是热更新，严禁销毁重建');
+  assert.equal(fiber.disposed, false);
+});
+
+test('设置表单: enabled 引用被改写后按启用状态重新协调装载', async (t) => {
+  const { rootDir, mod } = await makeIsolatedRoot({ plugins: {} });
+  const harness = createMockCtx();
+  t.after(() => {
+    harness.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  const profileConfig = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true } },
+  }).value;
+
+  await mod.apply(harness.ctx, profileConfig);
+  assert.equal(harness.mounted.length, 1, '初始启用应挂载');
+  const fiber = harness.mounted[0].fiber;
+
+  // 在表单里关掉开关：文件层未声明 enabled，因此 Profile 值可以生效
+  const next = mod.Config['~standard'].validate({ plugins: { notifier: { enabled: false } } }).value;
+  commitVolatile(profileConfig.plugins.notifier.enabled, next.plugins.notifier.enabled);
+  harness.ctx.emit('loader/volatile-update', [['plugins', 'notifier', 'enabled']]);
+
+  await waitFor(() => fiber.disposed, { label: '表单关闭开关后销毁 fiber' });
+  assert.equal(fiber.disposed, true, '表单关闭开关必须销毁已挂载实例');
+});
+
+test('设置表单: 宿主 dispose 后不再响应表单变更', async (t) => {
+  const { rootDir, mod } = await makeIsolatedRoot({ plugins: {} });
+  const harness = createMockCtx();
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+  const profileConfig = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true, volume: 1 } },
+  }).value;
+  await mod.apply(harness.ctx, profileConfig);
+  const fiber = harness.mounted[0].fiber;
+
+  harness.dispose();
+  harness.ctx.emit('loader/volatile-update', [['plugins', 'notifier', 'volume']]);
+  await delay(300);
+
+  assert.deepEqual(fiber.updates, [], 'dispose 之后严禁再响应表单变更，否则会向已卸载的 fiber 写入');
+});
+
+test('设置表单: 文件配置仍为最高权威，覆盖表单值（既定优先级不变）', async (t) => {
+  // 文件层显式声明 locale，因此表单改动必须被文件值盖回 —— 锁定既有优先级契约。
+  const { rootDir, mod } = await makeIsolatedRoot({
+    plugins: { notifier: { enabled: true, locale: 'zh' } },
+  });
+  const harness = createMockCtx();
+  t.after(() => {
+    harness.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  const profileConfig = mod.Config['~standard'].validate({
+    plugins: { notifier: { enabled: true, locale: 'en' } },
+  }).value;
+
+  await mod.apply(harness.ctx, profileConfig);
+  assert.equal(
+    harness.mounted[0].pluginConfig.locale,
+    'zh',
+    '文件配置为最高权威，必须覆盖 Profile / 表单传入值',
   );
 });

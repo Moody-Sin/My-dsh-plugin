@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-12
+
+### 新增 (Added)
+- **DSH 原生设置表单对接（方案 A）**：根插件详情页（Web GUI「插件」→「@local/my-dsh-plugins」）的表单现由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**，覆盖 `plugins.notifier` 下 **13 个可热改字段**（`enabled`、`locale`、`desktop.enabled`、`sound.enabled`、`events.*` 五项、`webhook.*` 四项），无需任何手写 UI 代码。
+  - `src/config.ts` 新增完整 `SCHEMA_DICT`，层级与 `plugins.notifier` 配置一一对应；`Config` 升级为 **Schemastery + Standard Schema v1 双契约对象**（`type` / `dict` / `meta` / `toJSON()` / `Symbol.for('schemastery')` 与 `'~standard'`）。
+  - **volatile 引用通道**：`Config['~standard'].validate()` 把 Schema 声明的叶子包装为 cosmokit 兼容的 volatile 引用，经 DSH 原生 `updateVolatile()` **免重启**即时生效。新增导出 `createVolatileRef()` / `isVolatileRef()` / `resolveVolatileRefs()`。
+  - `src/index.ts` 监听 `loader/volatile-update`，与文件监听**共用同一条 `reload()` 路径**，按新配置重新协调子插件的启用 / 禁用 / 热更新。
+  - 文档：根 `README.md` 新增「原生设置表单（DSH Web GUI）」章节，`src/README.md` 新增「DSH 原生设置表单对接（方案 A）」章节。
+
+### 变更 (Changed)
+- **根包版本提升至 `0.6.0`**（新增功能，遵循 SemVer 次版本号递增）；同步修正 `package-lock.json` 中滞后的 `0.5.0` 版本号。
+- `src/index.ts` 的 `apply()` 抽出 `resolveLatest()`：Profile 传入配置**先解引用**再与文件配置融合，保证透传给子插件的永远是原始值。
+- `deepMerge()` 与 `clonePlain()` 遇到 volatile 引用时**先解包**再合并，杜绝 `get` 句柄混入配置树。
+- 热重载日志按触发来源区分（「配置文件变更已生效」/「设置表单变更已生效」），便于用户定位配置来源。
+- **配置优先级保持不变**：`plugins.config.local.json` > `plugins.config.json` > 表单 / Profile 传入值。
+
+### 修复 (Fixed)
+- **`toJSON()` 返回共享引用会让表单在第二次渲染时整片消失**：DSH `plainSchema()` 拿到 `toJSON()` 结果后只做**浅层** `Object.assign`，紧接着 `walk()` 会**就地** `delete node.meta.volatile`。若返回共享引用，第一次渲染设置面板就会把模块级 Schema 的 volatile 标记全部抹掉，第二次 `volatileForm()` 即返回 `undefined`。现已改为**深拷贝**返回。
+- **用户未填写的字段不建立引用会让表单保存被静默丢弃**：DSH `LoaderEntry._commitVolatile()` 首行即 `volatileEntries(fiber.config)`，若引用集合为空会**立即返回**，随后变更键列表被清空，`if (!h.length && !s) return` 导致**整次保存什么都不发生**。现已为 Schema 声明的**每个** volatile 路径无条件占位，保证引用集合恒非空且新旧配置结构完全同构。
+- **叶子节点缺失 `toJSON()` 会让设置面板抛异常**：`plainSchema()` 对**每个** volatile 节点调用 `new z(schema.toJSON())`。现已为 Schema 树中的全部节点统一挂载 `toJSON()`。
+- **volatile 引用被直接透传给子插件会导致配置整体回落默认值**：子插件做的是 `typeof x === 'boolean'` 之类的原始值判断，收到 `{ get() {...} }` 会全部落空。现已在 `resolveLatest()` 中统一解引用。
+- **schema 快照失败会拖垮插件启动**：快照拒绝函数与循环引用（与 cosmokit 语义一致）；新增降级路径 —— 快照失败时退回原始值（该字段退化为不可热改）并输出中文告警，绝不让插件启动失败。
+
+### 测试 (Tests)
+- 根 Loader 测试由 **69 项扩充至 88 项**：
+  - `config.test.ts` 新增 13 项原生设置表单契约用例（37 项总计）：Schemastery 结构契约、`toJSON()` 深拷贝、每层 `meta` 齐备、13 个 volatile 叶子集合精确比对、层级节点不得标记 volatile、**`volatileForm()` 投影引擎忠实复刻**（投影结果精确等于 13 个叶子、**连续三次投影均非空**、投影不得污染模块级 `SCHEMA_DICT`、每个 volatile 节点都有 `toJSON`）、volatile 引用物化（含未填写字段占位、空/满配置结构同构）、快照深冻结与 `updateVolatile` 就地刷新、快照失败降级告警、`resolveVolatileRefs` 递归解包、`deepMerge` 遇引用先解包。
+  - `loader.test.ts` 新增 5 项设置表单联动端到端用例（34 项总计）：引用解引用后透传子插件、**宿主刷新快照 + `loader/volatile-update` 后热更新生效**、`enabled` 引用改写后重新协调装载、`dispose` 后不再响应、文件配置仍为最高权威。
+- 测试内**忠实复刻** DSH `volatileForm()` 投影引擎（保留 `new z(...)` 的浅层赋值与 `walk()` 的就地删除语义），而非引入官方依赖 —— 正是这两点组合才能真实暴露上述缺陷。
+- 另在 DSH checkout 内以临时脚本对**真实** `@deepseek-ai/dsh-settings` 与 `@deepseek-ai/cosmokit` 做端到端验证：`volatileForm()` 精确投影出 13 个叶子、连续三次投影均非空、`isVolatile()` / `volatileEntries()` 识别出 13 个引用、`updateVolatile()` 成功就地刷新快照。
+- 当前根 Loader **88 项**测试全绿。
+
 ## [0.5.0] - 2026-10-12
 
 ### 新增 (Added)
