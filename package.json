@@ -21,9 +21,15 @@
     "dsh-*"
   ],
   "scripts": {
-    "build:self": "node dsh-notifier/node_modules/esbuild/bin/esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
+    "build:self": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
     "build:plugins": "npm run build --workspaces",
     "build": "npm run build:plugins && npm run build:self",
-    "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts"
+    "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "npm run typecheck --workspaces && tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
   }
 }

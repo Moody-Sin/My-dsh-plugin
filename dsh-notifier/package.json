@@ -5,10 +5,10 @@
   "private": true,
   "type": "module",
   "main": "./index.js",
-  "types": "./lib/index.d.ts",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "exports": {
     ".": "./index.js",
@@ -30,6 +30,7 @@
     "@deepseek-ai/cordis": "~4.0.5-alpha.1"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
   }
