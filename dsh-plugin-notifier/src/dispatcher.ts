@@ -76,7 +76,10 @@ export class NotificationDispatcher {
       return;
     }
 
-    const minMs = this.config.desktop.minDurationSeconds * 1000;
+    // 事件级过滤阈值：优先 events.minDurationSeconds，其次回退旧版 desktop 配置，最后兜底 5 秒。
+    // 与 desktop.enabled 完全解耦，避免关闭桌面通知后 Webhook 仍被 desktop 配置过滤。
+    const minSec = this.config.events.minDurationSeconds ?? this.config.desktop.minDurationSeconds ?? 5;
+    const minMs = minSec * 1000;
     if (info.durationMs < minMs) {
       // Suppress short turn notifications to prevent spam
       return;

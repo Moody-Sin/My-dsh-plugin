@@ -33,7 +33,11 @@ $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
 $xml.LoadXml($xmlText)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 $appId = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+try {
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+} catch {
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier().Show($toast)
+}
 `.trim();
 
       const encoded = Buffer.from(psScript, 'utf16le').toString('base64');

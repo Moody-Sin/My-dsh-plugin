@@ -1,5 +1,11 @@
 export interface DesktopConfig {
   enabled: boolean;
+  /**
+   * @deprecated 请改用 `events.minDurationSeconds`。
+   * 该字段属于桌面渠道的职责，却长期被用作全局任务完成过滤阈值，
+   * 导致「关闭桌面通知后 Webhook 仍被 desktop 配置过滤」的职责混乱。
+   * 当前仅作为向后兼容的回退读取来源保留。
+   */
   minDurationSeconds: number;
 }
 
@@ -12,6 +18,8 @@ export interface EventsConfig {
   onQuestion: boolean;
   onApproval: boolean;
   onError: boolean;
+  /** 任务完成通知的耗时过滤阈值（秒），与桌面渠道开关完全解耦，默认 5。 */
+  minDurationSeconds?: number;
 }
 
 export type WebhookProvider = 'feishu' | 'dingtalk' | 'wecom' | 'bark' | 'generic';
@@ -33,6 +41,7 @@ export interface NotifierConfig {
 export const DEFAULT_CONFIG: NotifierConfig = {
   desktop: {
     enabled: true,
+    // 保留以保持完全向下兼容，实际过滤阈值以 events.minDurationSeconds 优先
     minDurationSeconds: 5,
   },
   sound: {
@@ -43,6 +52,7 @@ export const DEFAULT_CONFIG: NotifierConfig = {
     onQuestion: true,
     onApproval: true,
     onError: true,
+    minDurationSeconds: 5,
   },
   webhook: {
     enabled: false,
@@ -53,6 +63,13 @@ export const DEFAULT_CONFIG: NotifierConfig = {
 };
 
 const VALID_PROVIDERS = new Set<WebhookProvider>(['feishu', 'dingtalk', 'wecom', 'bark', 'generic']);
+
+/** 将候选值规整为非负整数秒数，非法输入返回 undefined。 */
+function normalizeDurationSeconds(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : undefined;
+}
 
 export function resolveConfig(candidate?: unknown): NotifierConfig {
   if (candidate === null || typeof candidate !== 'object') {
@@ -70,9 +87,11 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
   const eventsRaw = raw.events && typeof raw.events === 'object' ? raw.events : {};
   const webhookRaw = raw.webhook && typeof raw.webhook === 'object' ? raw.webhook : {};
 
-  const minDuration = typeof desktopRaw.minDurationSeconds === 'number'
-    ? Math.max(0, Math.floor(desktopRaw.minDurationSeconds))
-    : DEFAULT_CONFIG.desktop.minDurationSeconds;
+  const desktopMin = normalizeDurationSeconds(desktopRaw.minDurationSeconds);
+  const eventsMin = normalizeDurationSeconds(eventsRaw.minDurationSeconds);
+
+  // 事件级阈值与桌面渠道开关解耦：优先 events，其次回退读取旧版 desktop 配置，最后兜底 5 秒
+  const minDuration = eventsMin ?? desktopMin ?? DEFAULT_CONFIG.events.minDurationSeconds ?? 5;
 
   const provider: WebhookProvider = VALID_PROVIDERS.has(webhookRaw.provider)
     ? webhookRaw.provider
@@ -81,7 +100,7 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
   return {
     desktop: {
       enabled: typeof desktopRaw.enabled === 'boolean' ? desktopRaw.enabled : DEFAULT_CONFIG.desktop.enabled,
-      minDurationSeconds: minDuration,
+      minDurationSeconds: desktopMin ?? minDuration,
     },
     sound: {
       enabled: typeof soundRaw.enabled === 'boolean' ? soundRaw.enabled : DEFAULT_CONFIG.sound.enabled,
@@ -91,6 +110,7 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
       onQuestion: typeof eventsRaw.onQuestion === 'boolean' ? eventsRaw.onQuestion : DEFAULT_CONFIG.events.onQuestion,
       onApproval: typeof eventsRaw.onApproval === 'boolean' ? eventsRaw.onApproval : DEFAULT_CONFIG.events.onApproval,
       onError: typeof eventsRaw.onError === 'boolean' ? eventsRaw.onError : DEFAULT_CONFIG.events.onError,
+      minDurationSeconds: minDuration,
     },
     webhook: {
       enabled: typeof webhookRaw.enabled === 'boolean' ? webhookRaw.enabled : DEFAULT_CONFIG.webhook.enabled,
@@ -108,6 +128,48 @@ export function resolveConfig(candidate?: unknown): NotifierConfig {
  * 完成配置校验，因此这里必须提供符合 Standard Schema 规范的 `~standard` 属性，
  * 否则会抛出 `Cannot read properties of undefined (reading 'validate')`。
  */
+const SCHEMA_DICT = {
+  desktop: {
+    type: 'object',
+    description: '桌面通知渠道配置（minDurationSeconds 已废弃，仅作向后兼容回退）',
+    dict: {
+      enabled: { type: 'boolean', description: '是否启用操作系统原生桌面弹窗通知' },
+      minDurationSeconds: { type: 'number', description: '[已废弃] 请改用 events.minDurationSeconds' },
+    },
+  },
+  sound: {
+    type: 'object',
+    description: '系统提示音配置',
+    dict: {
+      enabled: { type: 'boolean', description: '是否在通知时播放系统提示音' },
+    },
+  },
+  events: {
+    type: 'object',
+    description: '事件开关与过滤阈值配置',
+    dict: {
+      onTurnEnd: { type: 'boolean', description: '任务完成时是否通知' },
+      onQuestion: { type: 'boolean', description: 'Agent 提问等待回答时是否通知' },
+      onApproval: { type: 'boolean', description: 'Agent 申请权限审批时是否通知' },
+      onError: { type: 'boolean', description: 'Agent 执行异常时是否通知' },
+      minDurationSeconds: {
+        type: 'number',
+        description: '任务完成通知的耗时过滤阈值（秒），默认 5；与桌面渠道开关解耦',
+      },
+    },
+  },
+  webhook: {
+    type: 'object',
+    description: 'Webhook 离机推送渠道配置',
+    dict: {
+      enabled: { type: 'boolean', description: '是否开启 Webhook 远端推送' },
+      provider: { type: 'string', description: '渠道类型：feishu | dingtalk | wecom | bark | generic' },
+      url: { type: 'string', description: 'Webhook 机器人地址' },
+      secret: { type: 'string', description: '签名密钥（可选）' },
+    },
+  },
+};
+
 export const Config: any = Object.assign(
   function validateConfig(data: unknown) {
     return resolveConfig(data);
@@ -125,21 +187,11 @@ export const Config: any = Object.assign(
       return {
         type: 'object',
         description: 'DSH Notifier Configuration',
-        dict: {
-          desktop: { type: 'object' },
-          sound: { type: 'object' },
-          events: { type: 'object' },
-          webhook: { type: 'object' },
-        },
+        dict: SCHEMA_DICT,
       };
     },
     type: 'object',
     description: 'DSH Notifier Configuration',
-    dict: {
-      desktop: { type: 'object' },
-      sound: { type: 'object' },
-      events: { type: 'object' },
-      webhook: { type: 'object' },
-    },
+    dict: SCHEMA_DICT,
   }
 );

@@ -176,3 +176,106 @@ test('dispatcher: onError triggers error alert notification and formats message'
   assert.ok(errorMsg.includes('Database connection failed'));
   assert.equal(errorKind, 'alert');
 });
+
+test('dispatcher: onTurnEnd honors events.minDurationSeconds as the filter threshold', async () => {
+  let called = false;
+
+  const config = resolveConfig({
+    desktop: { enabled: true, minDurationSeconds: 1 },
+    events: { onTurnEnd: true, minDurationSeconds: 30 },
+  });
+
+  const dispatcher = new NotificationDispatcher(config, {
+    desktopFn: async () => { called = true; return true; },
+    soundFn: async () => { called = true; return true; },
+    webhookFn: async () => { called = true; return true; },
+  });
+
+  // 10s 高于 desktop 阈值但低于 events 阈值，必须被抑制
+  await dispatcher.onTurnEnd({
+    turn: 1,
+    reason: { kind: 'completed' },
+    durationMs: 10000,
+  });
+  assert.equal(called, false, 'events.minDurationSeconds 必须优先于 desktop.minDurationSeconds');
+
+  await dispatcher.onTurnEnd({
+    turn: 2,
+    reason: { kind: 'completed' },
+    durationMs: 31000,
+  });
+  assert.equal(called, true, '超过 events 阈值时必须派发');
+});
+
+test('dispatcher: onTurnEnd keeps filtering webhook by events threshold when desktop is disabled', async () => {
+  let webhookCalled = false;
+  let desktopCalled = false;
+
+  const config = resolveConfig({
+    desktop: { enabled: false, minDurationSeconds: 60 },
+    events: { onTurnEnd: true, minDurationSeconds: 5 },
+    webhook: { enabled: true, provider: 'generic', url: 'https://example.com/hook' },
+  });
+
+  const dispatcher = new NotificationDispatcher(config, {
+    desktopFn: async () => { desktopCalled = true; return true; },
+    soundFn: async () => true,
+    webhookFn: async () => { webhookCalled = true; return true; },
+  });
+
+  // 8s：高于 events 阈值 5s，低于 desktop 阈值 60s
+  await dispatcher.onTurnEnd({
+    turn: 1,
+    reason: { kind: 'completed' },
+    durationMs: 8000,
+  });
+
+  assert.equal(desktopCalled, false, '桌面渠道关闭时不得调用 desktopFn');
+  assert.equal(webhookCalled, true, 'Webhook 过滤必须使用 events 阈值，不得误用 desktop 配置');
+});
+
+test('dispatcher: onTurnEnd falls back to desktop.minDurationSeconds when events threshold absent', async () => {
+  let called = false;
+
+  // 模拟旧版配置：仅存在 desktop.minDurationSeconds（经 resolveConfig 后 events 会被回填）
+  const config = resolveConfig({
+    desktop: { enabled: true, minDurationSeconds: 10 },
+  });
+  assert.equal(config.events.minDurationSeconds, 10, 'resolveConfig 应回填 events 阈值');
+
+  const dispatcher = new NotificationDispatcher(config, {
+    desktopFn: async () => { called = true; return true; },
+    soundFn: async () => true,
+    webhookFn: async () => true,
+  });
+
+  await dispatcher.onTurnEnd({ turn: 1, reason: { kind: 'completed' }, durationMs: 4000 });
+  assert.equal(called, false, '低于旧版 desktop 阈值时应被抑制');
+
+  await dispatcher.onTurnEnd({ turn: 2, reason: { kind: 'completed' }, durationMs: 11000 });
+  assert.equal(called, true, '高于旧版 desktop 阈值时应派发');
+});
+
+test('dispatcher: onTurnEnd uses a 5-second safety fallback when thresholds are missing', async () => {
+  let called = false;
+
+  // 绕过 resolveConfig，构造缺失阈值字段的残缺配置以验证兜底逻辑
+  const config = {
+    desktop: { enabled: true },
+    sound: { enabled: false },
+    events: { onTurnEnd: true },
+    webhook: { enabled: false, provider: 'generic', url: '' },
+  } as any;
+
+  const dispatcher = new NotificationDispatcher(config, {
+    desktopFn: async () => { called = true; return true; },
+    soundFn: async () => true,
+    webhookFn: async () => true,
+  });
+
+  await dispatcher.onTurnEnd({ turn: 1, reason: { kind: 'completed' }, durationMs: 4999 });
+  assert.equal(called, false, '低于 5 秒兜底阈值应被抑制');
+
+  await dispatcher.onTurnEnd({ turn: 2, reason: { kind: 'completed' }, durationMs: 5000 });
+  assert.equal(called, true, '达到 5 秒兜底阈值应派发');
+});

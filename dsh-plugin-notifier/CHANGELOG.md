@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-10-12
+
+### 新增 (Added)
+- 新增 `events.minDurationSeconds` 全局/事件级耗时过滤阈值（默认 5s），彻底解耦桌面通知开关与 Webhook 离机推送过滤。
+- Bark 渠道 Payload 增加跳转链接（默认 `http://127.0.0.1:3080`，支持 `metadata.url` 覆盖）与 `badge` 角标。
+- Webhook 针对高优先级提问、审批与告警事件增加网络抖动自动退避重试（1 次重试）。
+- Windows WinRT Toast 原生弹窗增加系统 AppID 注册缺失时的默认通知器降级容错。
+
+### 变更 (Changed)
+- `desktop.minDurationSeconds` 标记为向后兼容保留字段，优先使用 `events.minDurationSeconds`。
+
+### 测试 (Tests)
+- 扩充测试套件至 52 项测试（涵盖阈值解耦、向后兼容继承、网络超时重试、Bark 属性与降级覆盖等）。
+
 ## [0.1.1] - 2026-10-12
 
 ### 修复 (Fixed)

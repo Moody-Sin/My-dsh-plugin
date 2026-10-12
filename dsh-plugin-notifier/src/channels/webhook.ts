@@ -11,6 +11,21 @@ export interface WebhookPayload {
 
 export interface WebhookOptions {
   fetchFn?: typeof fetch;
+  /** 高优先级事件重试前的退避延迟（毫秒），默认 400，测试可传 0。 */
+  retryDelayMs?: number;
+}
+
+/** DSH Web GUI 控制台地址，作为 Bark 通知的默认点击跳转目标。 */
+const DEFAULT_BARK_URL = 'http://127.0.0.1:3080';
+
+/** 高优先级事件：需要用户立即响应的提问/审批，或告警级通知。 */
+export function isHighPriorityEvent(event: string, kind?: string): boolean {
+  return (
+    event === 'user-questions/request' ||
+    event === 'approval/request' ||
+    kind === 'warning' ||
+    kind === 'error'
+  );
 }
 
 function generateFeishuSign(secret: string, timestamp: number): string {
@@ -105,6 +120,9 @@ export async function sendWebhookNotification(
           title,
           body: message,
           group: 'DeepSeek Harness',
+          // 点击通知直接跳转 DSH 控制台；metadata.url 可覆盖为更具体的地址
+          url: metadata?.url || DEFAULT_BARK_URL,
+          badge: kind === 'error' ? 2 : 1,
         };
         break;
       }
@@ -123,16 +141,33 @@ export async function sendWebhookNotification(
       }
     }
 
-    const response = await fetchImpl(targetUrl, {
+    const requestInit: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000),
-    });
+    };
 
-    return response.ok;
+    const send = async (): Promise<boolean> => {
+      const response = await fetchImpl(targetUrl, {
+        ...requestInit,
+        signal: AbortSignal.timeout(5000),
+      });
+      return response.ok;
+    };
+
+    try {
+      return await send();
+    } catch (firstError) {
+      // 高优先级事件在网络抖动时做一次短退避重试，提升可达性；
+      // 普通 turn/end 成功通知不重试，避免重复打扰。
+      if (!isHighPriorityEvent(event, kind)) {
+        throw firstError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 400));
+      return await send();
+    }
   } catch {
     // Contain all network exceptions (timeout, DNS, connection refusal)
     return false;

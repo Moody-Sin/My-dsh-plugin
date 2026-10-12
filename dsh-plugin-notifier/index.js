@@ -1,7 +1,8 @@
-// dsh-plugin-notifier/src/config.ts
+// src/config.ts
 var DEFAULT_CONFIG = {
   desktop: {
     enabled: true,
+    // 保留以保持完全向下兼容，实际过滤阈值以 events.minDurationSeconds 优先
     minDurationSeconds: 5
   },
   sound: {
@@ -11,7 +12,8 @@ var DEFAULT_CONFIG = {
     onTurnEnd: true,
     onQuestion: true,
     onApproval: true,
-    onError: true
+    onError: true,
+    minDurationSeconds: 5
   },
   webhook: {
     enabled: false,
@@ -21,6 +23,9 @@ var DEFAULT_CONFIG = {
   }
 };
 var VALID_PROVIDERS = /* @__PURE__ */ new Set(["feishu", "dingtalk", "wecom", "bark", "generic"]);
+function normalizeDurationSeconds(value) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : void 0;
+}
 function resolveConfig(candidate) {
   if (candidate === null || typeof candidate !== "object") {
     return {
@@ -35,12 +40,14 @@ function resolveConfig(candidate) {
   const soundRaw = raw.sound && typeof raw.sound === "object" ? raw.sound : {};
   const eventsRaw = raw.events && typeof raw.events === "object" ? raw.events : {};
   const webhookRaw = raw.webhook && typeof raw.webhook === "object" ? raw.webhook : {};
-  const minDuration = typeof desktopRaw.minDurationSeconds === "number" ? Math.max(0, Math.floor(desktopRaw.minDurationSeconds)) : DEFAULT_CONFIG.desktop.minDurationSeconds;
+  const desktopMin = normalizeDurationSeconds(desktopRaw.minDurationSeconds);
+  const eventsMin = normalizeDurationSeconds(eventsRaw.minDurationSeconds);
+  const minDuration = eventsMin ?? desktopMin ?? DEFAULT_CONFIG.events.minDurationSeconds ?? 5;
   const provider = VALID_PROVIDERS.has(webhookRaw.provider) ? webhookRaw.provider : DEFAULT_CONFIG.webhook.provider;
   return {
     desktop: {
       enabled: typeof desktopRaw.enabled === "boolean" ? desktopRaw.enabled : DEFAULT_CONFIG.desktop.enabled,
-      minDurationSeconds: minDuration
+      minDurationSeconds: desktopMin ?? minDuration
     },
     sound: {
       enabled: typeof soundRaw.enabled === "boolean" ? soundRaw.enabled : DEFAULT_CONFIG.sound.enabled
@@ -49,7 +56,8 @@ function resolveConfig(candidate) {
       onTurnEnd: typeof eventsRaw.onTurnEnd === "boolean" ? eventsRaw.onTurnEnd : DEFAULT_CONFIG.events.onTurnEnd,
       onQuestion: typeof eventsRaw.onQuestion === "boolean" ? eventsRaw.onQuestion : DEFAULT_CONFIG.events.onQuestion,
       onApproval: typeof eventsRaw.onApproval === "boolean" ? eventsRaw.onApproval : DEFAULT_CONFIG.events.onApproval,
-      onError: typeof eventsRaw.onError === "boolean" ? eventsRaw.onError : DEFAULT_CONFIG.events.onError
+      onError: typeof eventsRaw.onError === "boolean" ? eventsRaw.onError : DEFAULT_CONFIG.events.onError,
+      minDurationSeconds: minDuration
     },
     webhook: {
       enabled: typeof webhookRaw.enabled === "boolean" ? webhookRaw.enabled : DEFAULT_CONFIG.webhook.enabled,
@@ -59,6 +67,47 @@ function resolveConfig(candidate) {
     }
   };
 }
+var SCHEMA_DICT = {
+  desktop: {
+    type: "object",
+    description: "\u684C\u9762\u901A\u77E5\u6E20\u9053\u914D\u7F6E\uFF08minDurationSeconds \u5DF2\u5E9F\u5F03\uFF0C\u4EC5\u4F5C\u5411\u540E\u517C\u5BB9\u56DE\u9000\uFF09",
+    dict: {
+      enabled: { type: "boolean", description: "\u662F\u5426\u542F\u7528\u64CD\u4F5C\u7CFB\u7EDF\u539F\u751F\u684C\u9762\u5F39\u7A97\u901A\u77E5" },
+      minDurationSeconds: { type: "number", description: "[\u5DF2\u5E9F\u5F03] \u8BF7\u6539\u7528 events.minDurationSeconds" }
+    }
+  },
+  sound: {
+    type: "object",
+    description: "\u7CFB\u7EDF\u63D0\u793A\u97F3\u914D\u7F6E",
+    dict: {
+      enabled: { type: "boolean", description: "\u662F\u5426\u5728\u901A\u77E5\u65F6\u64AD\u653E\u7CFB\u7EDF\u63D0\u793A\u97F3" }
+    }
+  },
+  events: {
+    type: "object",
+    description: "\u4E8B\u4EF6\u5F00\u5173\u4E0E\u8FC7\u6EE4\u9608\u503C\u914D\u7F6E",
+    dict: {
+      onTurnEnd: { type: "boolean", description: "\u4EFB\u52A1\u5B8C\u6210\u65F6\u662F\u5426\u901A\u77E5" },
+      onQuestion: { type: "boolean", description: "Agent \u63D0\u95EE\u7B49\u5F85\u56DE\u7B54\u65F6\u662F\u5426\u901A\u77E5" },
+      onApproval: { type: "boolean", description: "Agent \u7533\u8BF7\u6743\u9650\u5BA1\u6279\u65F6\u662F\u5426\u901A\u77E5" },
+      onError: { type: "boolean", description: "Agent \u6267\u884C\u5F02\u5E38\u65F6\u662F\u5426\u901A\u77E5" },
+      minDurationSeconds: {
+        type: "number",
+        description: "\u4EFB\u52A1\u5B8C\u6210\u901A\u77E5\u7684\u8017\u65F6\u8FC7\u6EE4\u9608\u503C\uFF08\u79D2\uFF09\uFF0C\u9ED8\u8BA4 5\uFF1B\u4E0E\u684C\u9762\u6E20\u9053\u5F00\u5173\u89E3\u8026"
+      }
+    }
+  },
+  webhook: {
+    type: "object",
+    description: "Webhook \u79BB\u673A\u63A8\u9001\u6E20\u9053\u914D\u7F6E",
+    dict: {
+      enabled: { type: "boolean", description: "\u662F\u5426\u5F00\u542F Webhook \u8FDC\u7AEF\u63A8\u9001" },
+      provider: { type: "string", description: "\u6E20\u9053\u7C7B\u578B\uFF1Afeishu | dingtalk | wecom | bark | generic" },
+      url: { type: "string", description: "Webhook \u673A\u5668\u4EBA\u5730\u5740" },
+      secret: { type: "string", description: "\u7B7E\u540D\u5BC6\u94A5\uFF08\u53EF\u9009\uFF09" }
+    }
+  }
+};
 var Config = Object.assign(
   function validateConfig(data) {
     return resolveConfig(data);
@@ -76,31 +125,21 @@ var Config = Object.assign(
       return {
         type: "object",
         description: "DSH Notifier Configuration",
-        dict: {
-          desktop: { type: "object" },
-          sound: { type: "object" },
-          events: { type: "object" },
-          webhook: { type: "object" }
-        }
+        dict: SCHEMA_DICT
       };
     },
     type: "object",
     description: "DSH Notifier Configuration",
-    dict: {
-      desktop: { type: "object" },
-      sound: { type: "object" },
-      events: { type: "object" },
-      webhook: { type: "object" }
-    }
+    dict: SCHEMA_DICT
   }
 );
 
-// dsh-plugin-notifier/src/channels/desktop.ts
+// src/channels/desktop.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 
-// dsh-plugin-notifier/src/utils/xml.ts
+// src/utils/xml.ts
 function escapeXml(text) {
   if (typeof text !== "string") {
     text = String(text ?? "");
@@ -108,7 +147,7 @@ function escapeXml(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-// dsh-plugin-notifier/src/channels/desktop.ts
+// src/channels/desktop.ts
 var defaultExec = promisify(execFile);
 async function sendDesktopNotification(title, message, options = {}) {
   const platform = options.platform || os.platform();
@@ -127,7 +166,11 @@ $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
 $xml.LoadXml($xmlText)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 $appId = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+try {
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)
+} catch {
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier().Show($toast)
+}
 `.trim();
       const encoded = Buffer.from(psScript, "utf16le").toString("base64");
       await exec("powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]);
@@ -155,7 +198,7 @@ $appId = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\power
   }
 }
 
-// dsh-plugin-notifier/src/channels/sound.ts
+// src/channels/sound.ts
 import { execFile as execFile2 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 import os2 from "node:os";
@@ -183,8 +226,12 @@ async function playNotificationSound(kind = "default", options = {}) {
   }
 }
 
-// dsh-plugin-notifier/src/channels/webhook.ts
+// src/channels/webhook.ts
 import crypto from "node:crypto";
+var DEFAULT_BARK_URL = "http://127.0.0.1:3080";
+function isHighPriorityEvent(event, kind) {
+  return event === "user-questions/request" || event === "approval/request" || kind === "warning" || kind === "error";
+}
 function generateFeishuSign(secret, timestamp) {
   const stringToSign = `${timestamp}
 ${secret}`;
@@ -268,7 +315,10 @@ ${message}`
         body = {
           title,
           body: message,
-          group: "DeepSeek Harness"
+          group: "DeepSeek Harness",
+          // 点击通知直接跳转 DSH 控制台；metadata.url 可覆盖为更具体的地址
+          url: metadata?.url || DEFAULT_BARK_URL,
+          badge: kind === "error" ? 2 : 1
         };
         break;
       }
@@ -285,21 +335,35 @@ ${message}`
         break;
       }
     }
-    const response = await fetchImpl(targetUrl, {
+    const requestInit = {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5e3)
-    });
-    return response.ok;
+      body: JSON.stringify(body)
+    };
+    const send = async () => {
+      const response = await fetchImpl(targetUrl, {
+        ...requestInit,
+        signal: AbortSignal.timeout(5e3)
+      });
+      return response.ok;
+    };
+    try {
+      return await send();
+    } catch (firstError) {
+      if (!isHighPriorityEvent(event, kind)) {
+        throw firstError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 400));
+      return await send();
+    }
   } catch {
     return false;
   }
 }
 
-// dsh-plugin-notifier/src/dispatcher.ts
+// src/dispatcher.ts
 function formatDuration(durationMs) {
   if (!Number.isFinite(durationMs) || durationMs < 0) {
     return "\u672A\u77E5";
@@ -347,7 +411,8 @@ var NotificationDispatcher = class {
     if (!this.config.events.onTurnEnd) {
       return;
     }
-    const minMs = this.config.desktop.minDurationSeconds * 1e3;
+    const minSec = this.config.events.minDurationSeconds ?? this.config.desktop.minDurationSeconds ?? 5;
+    const minMs = minSec * 1e3;
     if (info.durationMs < minMs) {
       return;
     }
@@ -419,7 +484,7 @@ var NotificationDispatcher = class {
   }
 };
 
-// dsh-plugin-notifier/src/index.ts
+// src/index.ts
 var name = "notifier";
 var inject = ["sessions"];
 var MAX_TRACKED_TURNS = 200;

@@ -1,0 +1,13 @@
+{
+  "name": "my-dsh-plugins",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "dsh-plugin-*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces"
+  }
+}

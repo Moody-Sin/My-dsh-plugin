@@ -13,6 +13,7 @@
           onQuestion: true
           onApproval: true
           onError: true
+          minDurationSeconds: 5
         webhook:
           enabled: false
           provider: 'generic'
