@@ -5,6 +5,10 @@
   "private": true,
   "type": "module",
   "main": "./index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",
