@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 修复 (Fixed)
+- **Cordis v4 生命周期与资源清理（`ctx.effect`）**：针对 Cordis v4 微内核不再向事件总线广播 `'dispose'` 事件的特性，将总线 `fs.watch`、定时器以及子插件时间缓存的清理全面接入 `ctx.effect(() => () => cleanup())`，并向下兼容测试 Mock 与旧环境的 `ctx.on('dispose')`，彻底杜绝插件卸载后的句柄与内存泄漏。
+- **环境变量插值 JSON 字符安全转义**：`src/config.ts` 在插值未解析的 JSON 字符串前，使用 `JSON.stringify` 对变量内容进行安全转义，杜绝 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法导致配置文件被静默判为损坏。
+- **热重载串行化排队**：`src/index.ts` 引入 `reloadQueue` 微型 Promise 互斥队列，强制文件监听器与设置表单保存严格串行执行，彻底消除多源并发调用导致的 `forks` 状态竞争与孤儿 Fiber 泄漏。
+- **WSL2 宿主环境跨界兼容**：在核心通知模块（`desktop.ts`、`sound.ts`）内置 WSL2 宿主 PowerShell 探测与跨界调用（抽取通用 `src/utils/wsl.ts`），抹平 WSL2 内部缺失图形服务导致通知丢失的问题，与 CLI 诊断脚本行为完全对齐。
+- **时间追踪与长任务防误报**：`dsh-notifier/src/index.ts` 在未捕获到 `turn/start`（如中途热重载或超限淘汰）时，耗时保守回退为 `0` 而非 `Infinity`，避免瞬间失败的短任务被误报骚扰。
+- **命令行参数注入防护与超长截断**：Linux `notify-send` 调用增加 `--` 选项界定符，避免以 `-` 开头的文本被误当参数；Windows Toast 对标题（100字）与正文（800字）实施长度保护，防止 Base64 编码后突破 Windows 8191 字符命令行限制引发 `EINVAL`。
+- **Telegram HTML 实体支持与 Webhook 5xx/429 重试**：Telegram 推送切换为更稳健的 HTML 模式并转义实体字符，防止编程标识符中的下划线等特殊字符引发 HTTP 400 失败；Webhook 发送将非 2xx HTTP 状态码纳入高优先级事件的退避重试判定。
+- **`getSessionTitle` 宽容度增强**：在 `session.header?.cwd` 基础上补充 `session.title` 与 `session.cwd` 回退，提升与测试环境及未来 DSH 视图的兼容性。
+
 ### 变更 (Changed)
 - **子插件 `@local/dsh-notifier` 升级至 `v0.5.0`**：
   - 彻底移除内置 `http://127.0.0.1:3088` 设置看板与 `src/server.ts`，消除常驻端口占用与 HTTP 内存开销；

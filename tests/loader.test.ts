@@ -125,6 +125,7 @@ function createMockCtx(
     registryHas?: (pluginDef: any) => boolean;
     fiber?: (pluginDef: any, pluginConfig: any) => any;
     logger?: any;
+    useEffect?: boolean;
   } = {},
 ) {
   const mounted: MountRecord[] = [];
@@ -153,6 +154,15 @@ function createMockCtx(
       const fiber = options.fiber ? options.fiber(pluginDef, pluginConfig) : defaultFiber();
       mounted.push({ pluginDef, pluginConfig, fiber });
       return fiber;
+    },
+    effect: (callback: () => void | (() => void)) => {
+      const cleanup = callback();
+      if (typeof cleanup === 'function') {
+        disposeHandlers.push(cleanup);
+      }
+      return () => {
+        if (typeof cleanup === 'function') cleanup();
+      };
     },
     on: (event: string, handler: any) => {
       if (event === 'dispose') disposeHandlers.push(handler);
@@ -719,6 +729,19 @@ test('热重载: 宿主 dispose 后注销 watcher，配置变更不再生效', a
 
   assert.deepEqual(fiber.updates, [], 'dispose 之后严禁再响应配置变更，否则句柄与定时器会长期驻留');
   assert.equal(harness.mounted.length, 1);
+
+  // 验证 Cordis v4 的 ctx.effect 清理钩子被正常注册
+  let effectCleanerRegistered = false;
+  const effectOnlyHarness = {
+    registry: { has: () => false },
+    plugin: async () => ({ state: 2 }),
+    effect: (callback: any) => {
+      const cleaner = callback();
+      if (typeof cleaner === 'function') effectCleanerRegistered = true;
+    },
+  };
+  await mod.apply(effectOnlyHarness, {});
+  assert.equal(effectCleanerRegistered, true, 'Cordis v4 ctx.effect 清理钩子必须正常挂载');
 });
 
 test('热重载: 子插件重载异常被捕获，不拖垮宿主', async (t) => {

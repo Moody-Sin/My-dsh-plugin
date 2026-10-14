@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import os from 'node:os';
 import { escapeXml } from '../utils/xml.ts';
+import { isWslWithPowershell, WSL_POWERSHELL_PATH } from '../utils/wsl.ts';
 import type { SoundKind } from './sound.ts';
 
 const defaultExec = promisify(execFile);
@@ -47,13 +48,19 @@ export async function sendDesktopNotification(
   message: string,
   options: DesktopOptions = {}
 ): Promise<boolean> {
-  const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000, windowsHide: true }) as any);
+  // 显式指定 platform 时以显式指定为准（保证单元测试与跨平台模拟确定性）；未指定且在 WSL 下自动跨界
+  const shouldBridgeWsl = options.platform === undefined && isWslWithPowershell();
+  const platform = options.platform || (shouldBridgeWsl ? 'win32' : os.platform());
+  const defaultExecCmd = shouldBridgeWsl ? WSL_POWERSHELL_PATH : 'powershell';
+  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(shouldBridgeWsl && cmd === 'powershell' ? defaultExecCmd : cmd, args, { timeout: 5000, windowsHide: true }) as any);
 
   try {
     if (platform === 'win32') {
-      const escapedTitle = escapeXml(title);
-      const escapedMessage = escapeXml(message);
+      // 截断保护：防止超长报错/堆栈引发 Windows 命令行 8191 字符上限溢出
+      const safeTitle = title.length > 100 ? `${title.slice(0, 97)}...` : title;
+      const safeMessage = message.length > 800 ? `${message.slice(0, 797)}...` : message;
+      const escapedTitle = escapeXml(safeTitle);
+      const escapedMessage = escapeXml(safeMessage);
       const audioElement = buildWinAudioElement(options.soundEnabled === true, options.soundKind ?? 'default');
       const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual>${audioElement}</toast>`;
       const base64Xml = Buffer.from(xmlString, 'utf-8').toString('base64');
@@ -106,7 +113,8 @@ try {
       if (options.iconPath) {
         args.push('-i', options.iconPath);
       }
-      args.push(title, message);
+      // 传递 '--' 参数截断符，防止标题或正文以 '-' 开头被误判为命令行选项
+      args.push('--', title, message);
       await exec('notify-send', args);
       return true;
     }

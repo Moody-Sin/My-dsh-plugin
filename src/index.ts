@@ -276,6 +276,19 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     );
   };
 
+  /**
+   * 热重载排队互斥链：强制所有文件变更与设置表单保存严格串行化执行，
+   * 彻底杜绝多源并发调用导致的 forks 登记表竞态与孤儿 Fiber 泄漏。
+   */
+  let reloadQueue: Promise<void> = Promise.resolve();
+  const queueReload = (source: 'file' | 'settings'): void => {
+    reloadQueue = reloadQueue
+      .then(() => reload(source))
+      .catch((error) => {
+        logger.warn(`子插件热重载队列执行异常 (${source}):`, error);
+      });
+  };
+
   try {
     watcher = fs.watch(rootDir, (_eventType, filename) => {
       // filename 在部分平台可能为 null；此时无法过滤，保守触发重载。
@@ -284,7 +297,7 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
-        void reload('file');
+        queueReload('file');
       }, CONFIG_WATCH_DEBOUNCE_MS);
       // 监听器不得阻止宿主进程退出：DSH 生命周期由宿主决定，插件只做被动响应。
       timer.unref?.();
@@ -311,14 +324,16 @@ export async function apply(ctx: any, config?: any): Promise<void> {
   try {
     ctx.on?.('loader/volatile-update', (paths: unknown) => {
       logger.info(`设置表单更新了配置字段: ${JSON.stringify(paths)}`);
-      void reload('settings');
+      queueReload('settings');
     });
   } catch (error) {
     logger.warn('设置表单联动监听注册失败，表单变更需重启后生效:', error);
   }
 
   // 宿主卸载插件时必须注销监听，否则句柄与定时器会长期驻留形成内存泄漏。
-  ctx.on?.('dispose', () => {
+  // 在 Cordis v4 微内核中，生命周期通过 ctx.effect(() => () => cleanup()) 托管；
+  // 同时向下兼容旧版或测试 Mock 的 ctx.on('dispose') 事件。
+  const cleanup = () => {
     active = false;
     if (timer) {
       clearTimeout(timer);
@@ -326,5 +341,21 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     }
     watcher?.close();
     watcher = undefined;
-  });
+  };
+
+  try {
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => cleanup);
+    } else if (typeof ctx?.on === 'function') {
+      ctx.on('dispose', cleanup);
+    }
+  } catch {
+    try {
+      if (typeof ctx?.on === 'function') {
+        ctx.on('dispose', cleanup);
+      }
+    } catch {
+      // 容错降级
+    }
+  }
 }

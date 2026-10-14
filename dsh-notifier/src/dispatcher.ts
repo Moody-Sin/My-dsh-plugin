@@ -4,6 +4,7 @@ import { sendDesktopNotification, type NotificationKind, type DesktopOptions } f
 import { playNotificationSound, type SoundKind } from './channels/sound.ts';
 import { sendWebhookNotification, type WebhookPayload } from './channels/webhook.ts';
 import { resolveLocale, label, t, type ResolvedLocale } from './utils/i18n.ts';
+import { isWslWithPowershell } from './utils/wsl.ts';
 
 export interface DispatcherOptions {
   desktopFn?: (title: string, message: string, options?: DesktopOptions) => Promise<boolean>;
@@ -73,7 +74,9 @@ export class NotificationDispatcher {
   constructor(config: NotifierConfig, options: DispatcherOptions = {}) {
     this.config = config;
     this.locale = resolveLocale(config.locale);
-    this.platform = options.platform || os.platform();
+    // 若未显式传入 platform 且当前处于 WSL2 环境并可用宿主 PowerShell，自动以 win32 模式统筹调度
+    const isWsl = !options.platform && isWslWithPowershell();
+    this.platform = options.platform || (isWsl ? 'win32' : os.platform());
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.nowFn = options.nowFn || Date.now;
     this.desktopFn = options.desktopFn || sendDesktopNotification;

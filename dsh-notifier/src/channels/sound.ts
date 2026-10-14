@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import os from 'node:os';
+import { isWslWithPowershell, WSL_POWERSHELL_PATH } from '../utils/wsl.ts';
 
 const defaultExec = promisify(execFile);
 
@@ -15,8 +16,10 @@ export async function playNotificationSound(
   kind: SoundKind = 'default',
   options: SoundOptions = {}
 ): Promise<boolean> {
-  const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(cmd, args, { timeout: 5000, windowsHide: true }) as any);
+  const shouldBridgeWsl = options.platform === undefined && isWslWithPowershell();
+  const platform = options.platform || (shouldBridgeWsl ? 'win32' : os.platform());
+  const defaultExecCmd = shouldBridgeWsl ? WSL_POWERSHELL_PATH : 'powershell';
+  const exec = options.execFn || ((cmd: string, args: string[]) => defaultExec(shouldBridgeWsl && cmd === 'powershell' ? defaultExecCmd : cmd, args, { timeout: 5000, windowsHide: true }) as any);
 
   try {
     if (platform === 'win32') {

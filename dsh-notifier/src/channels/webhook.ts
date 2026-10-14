@@ -52,6 +52,14 @@ function generateDingTalkSign(secret: string, timestamp: number): string {
   );
 }
 
+/** 转义 Telegram HTML 实体字符，避免正文特殊符号破坏消息结构 */
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export async function sendWebhookNotification(
   config: WebhookConfig,
   payload: WebhookPayload,
@@ -140,11 +148,13 @@ export async function sendWebhookNotification(
       }
 
       case 'telegram': {
-        // Telegram Bot API：secret 作为 chat_id 的便捷配置入口；
-        // URL 查询串已自带 chat_id 时以 URL 为准，避免重复且冲突的会话目标。
+        // Telegram Bot API：使用稳健的 HTML 模式，避免 Markdown 下划线或星号被误判为语法导致 400 失败；
+        // secret 作为 chat_id 的便捷配置入口；URL 查询串已自带 chat_id 时以 URL 为准。
+        const escapedTitle = escapeTelegramHtml(title);
+        const escapedMessage = escapeTelegramHtml(message);
         body = {
-          text: `*${title}*\n\n${message}`,
-          parse_mode: 'Markdown',
+          text: `<b>${escapedTitle}</b>\n\n${escapedMessage}`,
+          parse_mode: 'HTML',
         };
         if (config.secret && !hasQueryParam(targetUrl, 'chat_id')) {
           body.chat_id = config.secret;
@@ -204,17 +214,24 @@ export async function sendWebhookNotification(
       return response.ok;
     };
 
+    let firstSuccess = false;
     try {
-      return await send();
+      firstSuccess = await send();
+      if (firstSuccess) return true;
     } catch (firstError) {
-      // 高优先级事件在网络抖动时做一次短退避重试，提升可达性；
-      // 普通 turn/end 成功通知不重试，避免重复打扰。
       if (!isHighPriorityEvent(event, kind)) {
         throw firstError;
       }
+    }
+
+    // 高优先级事件在网络抖动或服务端非 2xx（如 502/503/429）时做一次短退避重试，提升可达性；
+    // 普通 turn/end 成功通知不重试，避免重复打扰。
+    if (isHighPriorityEvent(event, kind)) {
       await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 400));
       return await send();
     }
+
+    return firstSuccess;
   } catch {
     // Contain all network exceptions (timeout, DNS, connection refusal)
     return false;

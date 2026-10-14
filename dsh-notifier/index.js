@@ -188,6 +188,13 @@ function escapeXml(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+// src/utils/wsl.ts
+import fs from "node:fs";
+var WSL_POWERSHELL_PATH = "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe";
+function isWslWithPowershell(platform = process.platform, checkPathExists = (p) => fs.existsSync(p)) {
+  return platform === "linux" && checkPathExists(WSL_POWERSHELL_PATH);
+}
+
 // src/channels/desktop.ts
 var defaultExec = promisify(execFile);
 function buildWinAudioElement(soundEnabled, soundKind) {
@@ -198,12 +205,16 @@ function buildWinAudioElement(soundEnabled, soundKind) {
   return `<audio src="${source}"/>`;
 }
 async function sendDesktopNotification(title, message, options = {}) {
-  const platform = options.platform || os.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec(cmd, args, { timeout: 5e3, windowsHide: true }));
+  const shouldBridgeWsl = options.platform === void 0 && isWslWithPowershell();
+  const platform = options.platform || (shouldBridgeWsl ? "win32" : os.platform());
+  const defaultExecCmd = shouldBridgeWsl ? WSL_POWERSHELL_PATH : "powershell";
+  const exec = options.execFn || ((cmd, args) => defaultExec(shouldBridgeWsl && cmd === "powershell" ? defaultExecCmd : cmd, args, { timeout: 5e3, windowsHide: true }));
   try {
     if (platform === "win32") {
-      const escapedTitle = escapeXml(title);
-      const escapedMessage = escapeXml(message);
+      const safeTitle = title.length > 100 ? `${title.slice(0, 97)}...` : title;
+      const safeMessage = message.length > 800 ? `${message.slice(0, 797)}...` : message;
+      const escapedTitle = escapeXml(safeTitle);
+      const escapedMessage = escapeXml(safeMessage);
       const audioElement = buildWinAudioElement(options.soundEnabled === true, options.soundKind ?? "default");
       const xmlString = `<toast><visual><binding template="ToastGeneric"><text>${escapedTitle}</text><text>${escapedMessage}</text></binding></visual>${audioElement}</toast>`;
       const base64Xml = Buffer.from(xmlString, "utf-8").toString("base64");
@@ -252,7 +263,7 @@ try {
       if (options.iconPath) {
         args.push("-i", options.iconPath);
       }
-      args.push(title, message);
+      args.push("--", title, message);
       await exec("notify-send", args);
       return true;
     }
@@ -268,8 +279,10 @@ import { promisify as promisify2 } from "node:util";
 import os2 from "node:os";
 var defaultExec2 = promisify2(execFile2);
 async function playNotificationSound(kind = "default", options = {}) {
-  const platform = options.platform || os2.platform();
-  const exec = options.execFn || ((cmd, args) => defaultExec2(cmd, args, { timeout: 5e3, windowsHide: true }));
+  const shouldBridgeWsl = options.platform === void 0 && isWslWithPowershell();
+  const platform = options.platform || (shouldBridgeWsl ? "win32" : os2.platform());
+  const defaultExecCmd = shouldBridgeWsl ? WSL_POWERSHELL_PATH : "powershell";
+  const exec = options.execFn || ((cmd, args) => defaultExec2(shouldBridgeWsl && cmd === "powershell" ? defaultExecCmd : cmd, args, { timeout: 5e3, windowsHide: true }));
   try {
     if (platform === "win32") {
       const soundType = kind === "alert" ? "[System.Media.SystemSounds]::Exclamation.Play()" : "[System.Media.SystemSounds]::Asterisk.Play()";
@@ -315,6 +328,9 @@ ${secret}`;
   return encodeURIComponent(
     crypto.createHmac("sha256", secret).update(stringToSign).digest("base64")
   );
+}
+function escapeTelegramHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 async function sendWebhookNotification(config, payload, options = {}) {
   if (!config.enabled || !config.url) {
@@ -395,11 +411,13 @@ ${message}`
         break;
       }
       case "telegram": {
+        const escapedTitle = escapeTelegramHtml(title);
+        const escapedMessage = escapeTelegramHtml(message);
         body = {
-          text: `*${title}*
+          text: `<b>${escapedTitle}</b>
 
-${message}`,
-          parse_mode: "Markdown"
+${escapedMessage}`,
+          parse_mode: "HTML"
         };
         if (config.secret && !hasQueryParam(targetUrl, "chat_id")) {
           body.chat_id = config.secret;
@@ -447,15 +465,20 @@ ${message}`,
       });
       return response.ok;
     };
+    let firstSuccess = false;
     try {
-      return await send();
+      firstSuccess = await send();
+      if (firstSuccess) return true;
     } catch (firstError) {
       if (!isHighPriorityEvent(event, kind)) {
         throw firstError;
       }
+    }
+    if (isHighPriorityEvent(event, kind)) {
       await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 400));
       return await send();
     }
+    return firstSuccess;
   } catch {
     return false;
   }
@@ -546,7 +569,8 @@ var NotificationDispatcher = class {
   constructor(config, options = {}) {
     this.config = config;
     this.locale = resolveLocale(config.locale);
-    this.platform = options.platform || os3.platform();
+    const isWsl = !options.platform && isWslWithPowershell();
+    this.platform = options.platform || (isWsl ? "win32" : os3.platform());
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.nowFn = options.nowFn || Date.now;
     this.desktopFn = options.desktopFn || sendDesktopNotification;
@@ -697,10 +721,22 @@ function apply(ctx, rawConfig, options) {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
   const turnStartTimes = /* @__PURE__ */ new Map();
-  if (typeof ctx.on === "function") {
-    ctx.on("dispose", () => {
-      turnStartTimes.clear();
-    });
+  const cleanup = () => {
+    turnStartTimes.clear();
+  };
+  try {
+    if (typeof ctx?.effect === "function") {
+      ctx.effect(() => cleanup);
+    } else if (typeof ctx?.on === "function") {
+      ctx.on("dispose", cleanup);
+    }
+  } catch {
+    try {
+      if (typeof ctx?.on === "function") {
+        ctx.on("dispose", cleanup);
+      }
+    } catch {
+    }
   }
   function getSessionTitle(session) {
     if (!session) return void 0;
@@ -725,6 +761,12 @@ function apply(ctx, rawConfig, options) {
       }
     } catch {
     }
+    if (session.title) {
+      return session.title;
+    }
+    if (session.cwd) {
+      return session.cwd;
+    }
     if (session.header?.cwd) {
       return session.header.cwd;
     }
@@ -745,7 +787,7 @@ function apply(ctx, rawConfig, options) {
       const key = `${session?.id || "default"}:${turn}`;
       const startTime = turnStartTimes.get(key);
       turnStartTimes.delete(key);
-      const durationMs = startTime !== void 0 ? Date.now() - startTime : Infinity;
+      const durationMs = startTime !== void 0 ? Math.max(0, Date.now() - startTime) : 0;
       const sessionTitle = getSessionTitle(session);
       void dispatcher.onTurnEnd({
         turn,

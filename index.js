@@ -267,7 +267,8 @@ function deepMerge(target, source) {
 function interpolateEnvVariables(raw) {
   return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName) => {
     const value = process.env[varName];
-    return value === void 0 ? placeholder : value;
+    if (value === void 0) return placeholder;
+    return JSON.stringify(value).slice(1, -1);
   });
 }
 function readJsonFile(filePath) {
@@ -494,13 +495,19 @@ async function apply(ctx, config) {
       source === "settings" ? `\u8BBE\u7F6E\u8868\u5355\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D` : `\u914D\u7F6E\u6587\u4EF6\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D`
     );
   };
+  let reloadQueue = Promise.resolve();
+  const queueReload = (source) => {
+    reloadQueue = reloadQueue.then(() => reload(source)).catch((error) => {
+      logger.warn(`\u5B50\u63D2\u4EF6\u70ED\u91CD\u8F7D\u961F\u5217\u6267\u884C\u5F02\u5E38 (${source}):`, error);
+    });
+  };
   try {
     watcher = fs3.watch(rootDir, (_eventType, filename) => {
       if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename))) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = void 0;
-        void reload("file");
+        queueReload("file");
       }, CONFIG_WATCH_DEBOUNCE_MS);
       timer.unref?.();
     });
@@ -514,12 +521,12 @@ async function apply(ctx, config) {
   try {
     ctx.on?.("loader/volatile-update", (paths) => {
       logger.info(`\u8BBE\u7F6E\u8868\u5355\u66F4\u65B0\u4E86\u914D\u7F6E\u5B57\u6BB5: ${JSON.stringify(paths)}`);
-      void reload("settings");
+      queueReload("settings");
     });
   } catch (error) {
     logger.warn("\u8BBE\u7F6E\u8868\u5355\u8054\u52A8\u76D1\u542C\u6CE8\u518C\u5931\u8D25\uFF0C\u8868\u5355\u53D8\u66F4\u9700\u91CD\u542F\u540E\u751F\u6548:", error);
   }
-  ctx.on?.("dispose", () => {
+  const cleanup = () => {
     active = false;
     if (timer) {
       clearTimeout(timer);
@@ -527,7 +534,21 @@ async function apply(ctx, config) {
     }
     watcher?.close();
     watcher = void 0;
-  });
+  };
+  try {
+    if (typeof ctx?.effect === "function") {
+      ctx.effect(() => cleanup);
+    } else if (typeof ctx?.on === "function") {
+      ctx.on("dispose", cleanup);
+    }
+  } catch {
+    try {
+      if (typeof ctx?.on === "function") {
+        ctx.on("dispose", cleanup);
+      }
+    } catch {
+    }
+  }
 }
 export {
   Config,

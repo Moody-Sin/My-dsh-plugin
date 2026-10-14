@@ -681,6 +681,16 @@ test('interpolateEnvVariables: 替换值中的 $ 字符不被当作替换模式�
   });
 });
 
+test('interpolateEnvVariables: 替换值中的反斜杠与双引号经过 JSON 安全转义，不破坏 JSON.parse', () => {
+  withEnv({ UMBRELLA_TEST_WINPATH: 'C:\\Users\\Admin\\AppData', UMBRELLA_TEST_QUOTE: 'foo"bar' }, () => {
+    const rawJson = '{"path": "${UMBRELLA_TEST_WINPATH}", "quote": "${UMBRELLA_TEST_QUOTE}"}';
+    const interpolated = interpolateEnvVariables(rawJson);
+    const parsed = JSON.parse(interpolated);
+    assert.equal(parsed.path, 'C:\\Users\\Admin\\AppData', 'Windows 反斜杠经安全转义后正常解析');
+    assert.equal(parsed.quote, 'foo"bar', '双引号经安全转义后正常解析');
+  });
+});
+
 test('loadUmbrellaConfig: 配置文件中的环境变量占位符被插值（含 BOM 与嵌套字段）', (t) => {
   const dir = makeTempDir();
   t.after(() => cleanup(dir));

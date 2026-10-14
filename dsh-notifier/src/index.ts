@@ -23,10 +23,24 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
   const turnStartTimes = new Map<string, number>();
 
   // Ensure cleanup on plugin reload / unmount
-  if (typeof ctx.on === 'function') {
-    ctx.on('dispose', () => {
-      turnStartTimes.clear();
-    });
+  const cleanup = () => {
+    turnStartTimes.clear();
+  };
+  try {
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => cleanup);
+    } else if (typeof ctx?.on === 'function') {
+      ctx.on('dispose', cleanup);
+    }
+  } catch {
+    // 兼容可能对未声明属性访问抛错的严格 Proxy 环境
+    try {
+      if (typeof ctx?.on === 'function') {
+        ctx.on('dispose', cleanup);
+      }
+    } catch {
+      // 容错降级
+    }
   }
 
   function getSessionTitle(session: any): string | undefined {
@@ -60,6 +74,13 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
       // 服务探测失败时静默降级，继续走 cwd 兜底
     }
 
+    // 兼容可能直接携带在 session 根属性上的 title 或 cwd
+    if (session.title) {
+      return session.title;
+    }
+    if (session.cwd) {
+      return session.cwd;
+    }
     if (session.header?.cwd) {
       return session.header.cwd;
     }
@@ -85,8 +106,8 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
       const startTime = turnStartTimes.get(key);
       turnStartTimes.delete(key);
 
-      // If start wasn't observed (e.g. HMR reload), assume long task (Infinity) rather than 0
-      const durationMs = startTime !== undefined ? Date.now() - startTime : Infinity;
+      // 若未捕获到 turn/start（如中途热重载或超限淘汰），保守设为 0，避免瞬间失败的短任务被误报为耗时无限大
+      const durationMs = startTime !== undefined ? Math.max(0, Date.now() - startTime) : 0;
       const sessionTitle = getSessionTitle(session);
 
       void dispatcher.onTurnEnd({

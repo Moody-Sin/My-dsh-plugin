@@ -109,6 +109,44 @@ test('utils: escapeXml strips illegal XML control characters', () => {
   assert.equal(clean, 'HelloWorld');
 });
 
+test('channels: sendDesktopNotification 自动截断超长 title 与 message，防止 Windows 命令行超长溢出', async () => {
+  let executedArgs: string[] = [];
+  const longTitle = 'T'.repeat(200);
+  const longMsg = 'M'.repeat(2000);
+
+  const ok = await sendDesktopNotification(longTitle, longMsg, {
+    platform: 'win32',
+    execFn: async (cmd, args) => {
+      executedArgs = args;
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.equal(ok, true);
+  const b64Ps = executedArgs[3];
+  const decodedPs = Buffer.from(b64Ps, 'base64').toString('utf16le');
+  assert.ok(decodedPs.includes('LoadXml'));
+  const match = decodedPs.match(/FromBase64String\('([^']+)'\)/);
+  assert.ok(match, '脚本中包含 Base64 XML');
+  const xml = Buffer.from(match[1], 'base64').toString('utf-8');
+  assert.ok(xml.includes('T'.repeat(97) + '...'));
+  assert.ok(xml.includes('M'.repeat(797) + '...'));
+});
+
+test('channels: Linux sendDesktopNotification 包含 -- 参数截断符', async () => {
+  let executedArgs: string[] = [];
+  const ok = await sendDesktopNotification('- 任务完成', '- 包含列表项', {
+    platform: 'linux',
+    execFn: async (cmd, args) => {
+      executedArgs = args;
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(executedArgs.slice(0, 3), ['--', '- 任务完成', '- 包含列表项']);
+});
+
 test('channels: sendDesktopNotification formats commands per platform', async () => {
   const calls: { cmd: string; args: string[] }[] = [];
   const mockExec = async (cmd: string, args: string[]) => {
@@ -140,6 +178,7 @@ test('channels: sendDesktopNotification formats commands per platform', async ()
   });
   assert.equal(linuxSuccess, true);
   assert.equal(calls[2].cmd, 'notify-send');
+  assert.deepEqual(calls[2].args, ['--', 'Linux Title', 'Linux Message']);
 });
 
 test('channels: sendDesktopNotification gracefully handles execution failure', async () => {
@@ -283,6 +322,23 @@ test('channels: webhook retries once with backoff for high-priority events', asy
   assert.equal(approvalOk, true);
   assert.equal(attempts, 2);
 
+  // 验证服务端返回 502 Bad Gateway 状态码时同样触发重试
+  let statusAttempts = 0;
+  const statusFlakyFetch = async () => {
+    statusAttempts += 1;
+    if (statusAttempts === 1) {
+      return new Response('502 Bad Gateway', { status: 502 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  const status502Ok = await sendWebhookNotification(
+    config,
+    { title: '错误', message: '崩溃', event: 'agent/error', kind: 'error' },
+    { fetchFn: statusFlakyFetch, retryDelayMs: 0 }
+  );
+  assert.equal(status502Ok, true, '高优先级事件遇到 502 状态码时也应触发重试');
+  assert.equal(statusAttempts, 2, '502 状态码下应重试一次');
+
   attempts = 0;
   const errorOk = await sendWebhookNotification(
     config,
@@ -415,7 +471,7 @@ test('channels: Linux 告警通知传递 critical 紧急度和图标', async () 
 
   assert.equal(calls[0].cmd, 'notify-send');
   assert.deepEqual(calls[0].args, [
-    '-u', 'critical', '-i', '/tmp/dsh-notifier.png', '告警', '磁盘空间不足',
+    '-u', 'critical', '-i', '/tmp/dsh-notifier.png', '--', '告警', '磁盘空间不足',
   ]);
 });
 
@@ -430,7 +486,8 @@ test('channels: Linux 普通通知不追加紧急度与图标参数', async () =
     },
   });
 
-  assert.deepEqual(calls[0].args, ['完成', '一切正常']);
+  assert.equal(calls[0].cmd, 'notify-send');
+  assert.deepEqual(calls[0].args, ['--', '完成', '一切正常']);
 });
 
 test('channels: macOS 通知把会话名放入 subtitle', async () => {
@@ -465,7 +522,7 @@ test('channels: macOS 无副标题时脚本降级为双参数调用', async () =
   assert.deepEqual(calls[0].args.slice(-3), ['--', '正文', '标题']);
 });
 
-test('channels: Telegram 使用 Markdown 正文并把 secret 作为 chat_id', async () => {
+test('channels: Telegram 使用 HTML 正文并把 secret 作为 chat_id', async () => {
   let requestedUrl = '';
   let requestedBody = '';
   const ok = await sendWebhookNotification(
@@ -475,7 +532,7 @@ test('channels: Telegram 使用 Markdown 正文并把 secret 作为 chat_id', as
       url: 'https://api.telegram.org/botTOKEN/sendMessage',
       secret: '-100123456',
     },
-    { title: 'Task Done', message: 'All steps complete', event: 'turn/end', kind: 'success' },
+    { title: 'Task Done <重要>', message: 'All steps & status: complete', event: 'turn/end', kind: 'success' },
     {
       fetchFn: async (url, init) => {
         requestedUrl = String(url);
@@ -489,8 +546,8 @@ test('channels: Telegram 使用 Markdown 正文并把 secret 作为 chat_id', as
   assert.equal(requestedUrl, 'https://api.telegram.org/botTOKEN/sendMessage');
   assert.deepEqual(JSON.parse(requestedBody), {
     chat_id: '-100123456',
-    text: '*Task Done*\n\nAll steps complete',
-    parse_mode: 'Markdown',
+    text: '<b>Task Done &lt;重要&gt;</b>\n\nAll steps &amp; status: complete',
+    parse_mode: 'HTML',
   });
 });
 
@@ -543,5 +600,22 @@ test('channels: Discord 发送带等级颜色与时间戳的 Rich Embed', async 
     assert.equal(embed.color, color);
     assert.ok(!Number.isNaN(Date.parse(embed.timestamp)), '时间戳必须是 ISO 日期');
   }
+});
+
+test('utils: isWslWithPowershell 跨平台探测边界条件', async () => {
+  const { isWslWithPowershell, WSL_POWERSHELL_PATH } = await import('../src/utils/wsl.ts');
+
+  // 1. 非 Linux 平台恒为 false
+  assert.equal(isWslWithPowershell('win32', () => true), false);
+  assert.equal(isWslWithPowershell('darwin', () => true), false);
+
+  // 2. Linux 平台但路径不存在
+  assert.equal(isWslWithPowershell('linux', () => false), false);
+
+  // 3. Linux 平台且路径匹配存在
+  assert.equal(
+    isWslWithPowershell('linux', (path) => path === WSL_POWERSHELL_PATH),
+    true
+  );
 });
 

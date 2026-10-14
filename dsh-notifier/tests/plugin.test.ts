@@ -110,6 +110,12 @@ const DEFAULT_TEST_CONFIG = {};
 test('plugin: attaches listeners and processes turn/start -> turn/end cycle', async () => {
   const ctx = createMockContext();
   let dispatchedTurnEnd = false;
+  let effectCleanupRan = false;
+
+  (ctx as any).effect = (cb: () => void | (() => void)) => {
+    const cleaner = cb();
+    if (typeof cleaner === 'function') effectCleanupRan = true;
+  };
 
   const mockDispatcher = {
     onTurnEnd: async () => { dispatchedTurnEnd = true; },
@@ -120,6 +126,7 @@ test('plugin: attaches listeners and processes turn/start -> turn/end cycle', as
 
   apply(ctx as any, DEFAULT_TEST_CONFIG, { dispatcher: mockDispatcher as any });
 
+  assert.ok(effectCleanupRan, 'Cordis v4 ctx.effect 清理回调必须注册');
   assert.ok(ctx.listeners['session/event']?.length, 'session/event must be registered');
 
   const session = { id: 'sess-123' };

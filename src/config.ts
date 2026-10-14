@@ -454,6 +454,7 @@ export function deepMerge(target: any, source: any): any {
  * 插值配置文本中的环境变量占位符（`${VAR_NAME}` 与 `${env:VAR_NAME}`）。
  *
  * - 变量已定义时替换为对应值（空串也是合法取值，照常替换）；
+ * - 经 JSON.stringify 安全转义并剥离首尾引号，防止 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法；
  * - 变量未定义时**原样保留占位符**，便于用户直观发现漏配的变量，
  *   而不是被静默替换成空串导致凭据以空值下发。
  *
@@ -462,7 +463,8 @@ export function deepMerge(target: any, source: any): any {
 export function interpolateEnvVariables(raw: string): string {
   return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string) => {
     const value = process.env[varName];
-    return value === undefined ? placeholder : value;
+    if (value === undefined) return placeholder;
+    return JSON.stringify(value).slice(1, -1);
   });
 }
 
