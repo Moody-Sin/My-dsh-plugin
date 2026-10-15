@@ -21,6 +21,9 @@
         "url": "",
         "secret": ""
       }
+    },
+    "subagent-model-indicator": {
+      "enabled": true
     }
   }
 }

@@ -255,6 +255,18 @@ export const SCHEMA_DICT: Record<string, SchemaNode> = {
           },
         },
       },
+      'subagent-model-indicator': {
+        type: 'object',
+        description: '子智能体模型指示器配置',
+        meta: {},
+        dict: {
+          enabled: {
+            type: 'boolean',
+            description: '启用子智能体模型指示器',
+            meta: { volatile: true },
+          },
+        },
+      },
     },
   },
 };

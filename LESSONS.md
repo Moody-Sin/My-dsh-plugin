@@ -32,3 +32,8 @@
 - **Cordis v4 不再向总线广播 `'dispose'` 事件**：v4 微内核中 Fiber 生命周期清理全面收敛至 Effect 架构（`ctx.effect(() => () => cleanup())`）。在插件卸载阶段仅执行 Effect 清理函数，`ctx.on('dispose', ...)` 恒不被触发。因此必须通过 `ctx.effect` 托管卸载清理，并兼顾旧环境降级。
 - **原始文本正则插值环境变量破坏 JSON 语法**：环境变量中包含 Windows 反斜杠 `\` 或双引号 `"` 时，直接以正则代换到未解析的 JSON 字符串中会产生非法转义字符导致解析崩溃。必须通过 `JSON.stringify(val).slice(1, -1)` 对内容安全转义后再行代换。
 
+## 8. DSH 客户端插件与模块解析协议
+- **DSH 客户端插件 package.json 必须在 exports 中显式暴露 `"./package.json"`**：DSH 宿主在 `locatePkgJson` 中通过 `createRequire(baseUrl).resolve(`${expectedPackageName}/package.json`)` 寻找插件根，Node.js 默认禁止未导出 package.json 的包解析其自身 package.json，会导致无法定位客户端 bundle。
+- **子智能体模型感知机制**：DSH 会话投影中记录了 `modelSelection`（含 `lastUsed` 与 `next`），但原生 `ui-model-selection` 限制子智能体不挂载输入栏模型控件。通过在 `conversation.session.header.actions` 挂载徽标并校验 `session.origin === 'subagent'`，可优雅补齐模型名称与推理层级（Reasoning Effort）的展示，且完全不干扰主会话。
+
+

@@ -1,0 +1,4 @@
+# Subagent Model Indicator Bundle Patch
+- insert:
+    - id: subagent-model-indicator
+      name: '@local/dsh-subagent-model-indicator'

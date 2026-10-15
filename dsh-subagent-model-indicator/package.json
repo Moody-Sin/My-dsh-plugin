@@ -1,0 +1,50 @@
+{
+  "name": "@local/dsh-subagent-model-indicator",
+  "version": "0.1.0",
+  "description": "Subagent model indicator badge for DeepSeek Harness conversation header",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-api-session-controller"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5-alpha.1"
+  },
+  "scripts": {
+    "build:node": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
+    "build:client": "esbuild src/client.ts --bundle --platform=browser --format=iife --outfile=client.js",
+    "build": "npm run build:node && npm run build:client",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^18.2.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

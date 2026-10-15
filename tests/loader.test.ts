@@ -230,8 +230,10 @@ test('loader: apply 正确挂载子插件并剥离 enabled 元字段', async (t)
     },
   });
 
-  assert.equal(harness.mounted.length, 1);
-  const conf = harness.mounted[0].pluginConfig;
+  assert.equal(harness.mounted.length, 2);
+  const notifierMount = harness.mounted.find(m => m.pluginDef?.name === 'notifier');
+  assert.ok(notifierMount, 'notifier 必须被挂载');
+  const conf = notifierMount.pluginConfig;
   assert.equal(conf.enabled, undefined, 'enabled 字段必须被剥离');
   assert.equal(conf.sound.volume, 3, '非冲突字段必须原样透传');
   // 仓库 plugins.config.json 中 notifier.sound.enabled 为 true，文件配置优先级更高（缺陷 A）。
@@ -322,8 +324,8 @@ test('loader: 不同子插件导出同名 name 时不得被误吞（缺陷 B）'
 
   await apply(harness.ctx, { plugins: { notifier: { enabled: true } } });
 
-  assert.equal(harness.mounted.length, 1, '不同模块的同名插件必须照常装载，不得因 name 撞车被静默跳过');
-  assert.equal(harness.mounted[0].pluginDef?.name, 'notifier');
+  assert.equal(harness.mounted.length, 2, '不同模块的同名插件必须照常装载，不得因 name 撞车被静默跳过');
+  assert.ok(harness.mounted.some(m => m.pluginDef?.name === 'notifier'));
 });
 
 test('loader: fiber 未进入 ACTIVE 状态时输出中文告警（缺陷 E）', async (t) => {
@@ -336,9 +338,9 @@ test('loader: fiber 未进入 ACTIVE 状态时输出中文告警（缺陷 E）',
   );
   const warnings = logs.filter((line) => line.includes('未进入 ACTIVE'));
 
-  assert.equal(warnings.length, 1, '卡在 PENDING 的插件必须告警');
+  assert.equal(warnings.length, 2, '卡在 PENDING 的插件必须告警');
   assert.match(warnings[0], /\[my-dsh-plugins\]/);
-  assert.match(warnings[0], /notifier/);
+  assert.ok(warnings.some(w => w.includes('notifier')));
   assert.match(warnings[0], /未在|未进入|等待依赖|尚未真正生效|ACTIVE/);
 });
 

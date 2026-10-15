@@ -1,0 +1,6 @@
+{
+  "title": "子智能体模型指示器",
+  "description": "在会话头部展示当前子智能体所使用的模型名称与推理层级。",
+  "tooltip": "子智能体模型: {model}",
+  "tooltipWithEffort": "子智能体模型: {model} (推理层级: {effort})"
+}

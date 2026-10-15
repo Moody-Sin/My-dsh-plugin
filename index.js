@@ -160,6 +160,18 @@ var SCHEMA_DICT = {
             }
           }
         }
+      },
+      "subagent-model-indicator": {
+        type: "object",
+        description: "\u5B50\u667A\u80FD\u4F53\u6A21\u578B\u6307\u793A\u5668\u914D\u7F6E",
+        meta: {},
+        dict: {
+          enabled: {
+            type: "boolean",
+            description: "\u542F\u7528\u5B50\u667A\u80FD\u4F53\u6A21\u578B\u6307\u793A\u5668",
+            meta: { volatile: true }
+          }
+        }
       }
     }
   }

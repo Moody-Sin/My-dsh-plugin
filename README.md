@@ -92,15 +92,15 @@
 
 在 DSH Web GUI 的 **「插件」→「@local/my-dsh-plugins」详情页**中，表单由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**，无需任何手写 UI 代码。
 
-表单覆盖 `plugins.notifier` 下的 **13 个可热改字段**：
+表单覆盖 `plugins.notifier` 与 `plugins.subagent-model-indicator` 下的 **14 个可热改字段**：
 
 | 分组 | 字段 |
 | :--- | :--- |
-| 基础 | `enabled`（启用通知插件）、`locale`（语言设置 auto / zh / en） |
-| 系统桌面弹窗 | `desktop.enabled` |
-| 系统提示音 | `sound.enabled` |
-| 事件通知 | `events.onTurnEnd`、`events.onQuestion`、`events.onApproval`、`events.onError`、`events.minDurationSeconds` |
-| Webhook 离机推送 | `webhook.enabled`、`webhook.provider`、`webhook.url`、`webhook.secret` |
+| 基础 | `plugins.notifier.enabled`（启用通知插件）、`plugins.notifier.locale`（语言设置 auto / zh / en）、`plugins.subagent-model-indicator.enabled`（启用子智能体模型指示器） |
+| 系统桌面弹窗 | `plugins.notifier.desktop.enabled` |
+| 系统提示音 | `plugins.notifier.sound.enabled` |
+| 事件通知 | `plugins.notifier.events.onTurnEnd`、`plugins.notifier.events.onQuestion`、`plugins.notifier.events.onApproval`、`plugins.notifier.events.onError`、`plugins.notifier.events.minDurationSeconds` |
+| Webhook 离机推送 | `plugins.notifier.webhook.enabled`、`plugins.notifier.webhook.provider`、`plugins.notifier.webhook.url`、`plugins.notifier.webhook.secret` |
 
 保存表单后经 DSH 原生 **volatile 引用**通道**免重启**即时生效：宿主就地刷新引用快照并发出 `loader/volatile-update`，加载器随即按新配置重新协调各子插件的装载状态。
 
@@ -135,6 +135,7 @@
 | :--- | :--- | :--- | :--- |
 | **`@local/my-dsh-plugins`** | 根目录 (`./`) | `v0.6.0` | 聚合插件总线 Loader，提供自动扫描、双层配置、环境变量插值、配置热重载、隔离装载与 **DSH 原生设置表单（Schemastery Schema）**。 |
 | **`@local/dsh-notifier`** | [`dsh-notifier/`](./dsh-notifier) | `v0.5.0` | 跨平台系统原生桌面弹窗、提示音、飞书/钉钉/企微/Bark/Telegram/Discord/通用 Webhook 离机通知及 CLI 连通性诊断工具（零常驻端口）。 |
+| **`@local/dsh-subagent-model-indicator`** | [`dsh-subagent-model-indicator/`](./dsh-subagent-model-indicator) | `v0.1.0` | 在子智能体对话页面头部操作区展示正在使用的模型名称与推理层级（Reasoning Effort）。 |
 
 ## 开发指南
 

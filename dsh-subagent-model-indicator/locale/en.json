@@ -1,0 +1,6 @@
+{
+  "title": "Subagent Model Indicator",
+  "description": "Display the model name and reasoning effort of the current subagent in the conversation header.",
+  "tooltip": "Subagent Model: {model}",
+  "tooltipWithEffort": "Subagent Model: {model} (Reasoning Effort: {effort})"
+}

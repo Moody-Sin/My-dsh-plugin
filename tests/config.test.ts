@@ -324,6 +324,7 @@ test('SCHEMA_DICT: 每一层都必须带 meta，叶子必须带 volatile 标记'
     'plugins.notifier.webhook.provider',
     'plugins.notifier.webhook.url',
     'plugins.notifier.webhook.secret',
+    'plugins.subagent-model-indicator.enabled',
   ];
 
   const actualVolatile: string[] = [];
@@ -344,7 +345,7 @@ test('SCHEMA_DICT: 每一层都必须带 meta，叶子必须带 volatile 标记'
 });
 
 test('SCHEMA_DICT: 层级节点严禁标记 volatile（否则表单跳过剪枝、层级变可编辑控件）', () => {
-  for (const path of ['plugins', 'plugins.notifier', 'plugins.notifier.desktop', 'plugins.notifier.sound', 'plugins.notifier.events', 'plugins.notifier.webhook']) {
+  for (const path of ['plugins', 'plugins.notifier', 'plugins.notifier.desktop', 'plugins.notifier.sound', 'plugins.notifier.events', 'plugins.notifier.webhook', 'plugins.subagent-model-indicator']) {
     const node = path.split('.').reduce<any>((acc, key) => acc.dict[key], Config);
     assert.equal(node.meta.volatile, undefined, `层级节点 ${path} 不得标记 volatile`);
     assert.equal(node.type, 'object');
@@ -419,8 +420,9 @@ test('volatileForm 投影: 能完整投影出 plugins.notifier 的可编辑字�
       'plugins.notifier.webhook.provider',
       'plugins.notifier.webhook.secret',
       'plugins.notifier.webhook.url',
+      'plugins.subagent-model-indicator.enabled',
     ],
-    '投影结果必须精确等于 13 个 volatile 叶子字段',
+    '投影结果必须包含 volatile 叶子字段',
   );
 
   // 层级节点必须保留，否则前端无法分组渲染

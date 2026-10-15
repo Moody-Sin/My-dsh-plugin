@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 新增 (Added)
+- **子插件 `@local/dsh-subagent-model-indicator` (v0.1.0)**：
+  - 解决子智能体对话页面未展示其运行模型的问题。
+  - 在会话头部操作区插槽 `conversation.session.header.actions` 挂载模型指示器徽标，读取 `session.projectionValues.modelSelection` 数据。
+  - 严格限定仅在子智能体（`session.origin === 'subagent'`）时渲染，不侵入主会话模型选择器。
+  - 遵循 DSH Design Tokens（`--dsw-radius-xs`、`--dsw-alias-fill-tsp-secondary`、`--dsw-alias-label-secondary`），支持中英文国际化与推理层级（Reasoning Effort）友好展示。
+  - 聚合总线配置无缝接入：在 `SCHEMA_DICT` 中注册 `subagent-model-indicator` 并标记 `volatile: true`，支持原生表单免重启热重载。
+
+
 ### 修复 (Fixed)
 - **Cordis v4 生命周期与资源清理（`ctx.effect`）**：针对 Cordis v4 微内核不再向事件总线广播 `'dispose'` 事件的特性，将总线 `fs.watch`、定时器以及子插件时间缓存的清理全面接入 `ctx.effect(() => () => cleanup())`，并向下兼容测试 Mock 与旧环境的 `ctx.on('dispose')`，彻底杜绝插件卸载后的句柄与内存泄漏。
 - **环境变量插值 JSON 字符安全转义**：`src/config.ts` 在插值未解析的 JSON 字符串前，使用 `JSON.stringify` 对变量内容进行安全转义，杜绝 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法导致配置文件被静默判为损坏。
