@@ -10,6 +10,10 @@ export const LOCAL_CONFIG_FILENAME = 'plugins.config.local.json';
  * 环境变量占位符：支持 `${VAR_NAME}`、`${env:VAR_NAME}` 以及带默认值语法 `${VAR_NAME:-default_value}`。
  *
  * 变量名限定为 `[A-Za-z_][A-Za-z0-9_]*`，避免把 `${a.b}` 这类非环境变量写法误伤。
+ *
+ * 注意：`dsh-notifier/src/utils/env.ts` 有一份语义相同的实现。两处**刻意不共享**——
+ * 子插件是独立包，反向 import 根包（聚合器）会造成架构倒置、也让子插件无法单独复用。
+ * 改动其中一处时请同步另一处，两边的测试用例集合亦应对齐。
  */
 const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
@@ -138,136 +142,21 @@ export interface SchemaNode {
 }
 
 /**
- * 聚合总线的完整配置 Schema 字典（层级与 `plugins.notifier` 的配置一一对应）。
+ * 聚合总线的配置 Schema 字典。
  *
- * **每一项都必须带 `meta`**：DSH 的 `volatileForm()` 与 `isVolatilePath()` 会无条件读取
- * `node.meta.volatile` 并递归遍历 `dict` 的每个子节点，缺失 `meta` 会直接抛 `TypeError`，
- * 导致整个设置面板崩溃。
+ * **本字典刻意保持为空**：所有子插件的字段由 `registerPluginSchema()` 在装载时
+ * 依据子插件自己导出的 `Config` / `SCHEMA_DICT` 动态填充。曾经在此硬编码一份
+ * notifier 的字段表，与 `dsh-notifier/src/config.ts` 里的那份构成必须同步修改的
+ * 重复真相 —— 子插件改了字段而这里没改（或反之），设置面板的形态就取决于装载顺序。
  *
- * 对象节点用 `meta: {}` 承载层级（本身不可编辑），叶子节点用 `meta: { volatile: true }`
- * 声明「可在设置面板中免重启热改」。不含任何 volatile 字段的子树会被 `volatileForm()`
- * 整棵剪除，因此层级节点自身**不得**标记 volatile —— 一旦标记，
- * `volatileForm()` 会走 `plainSchema()` 直接返回整棵未剪枝的 Schema，层级也会变成可编辑控件。
+ * 未导出 Schema 的子插件由 `registerPluginSchema()` 自动补一个 `enabled` 开关。
  */
 export const SCHEMA_DICT: Record<string, SchemaNode> = {
   plugins: {
     type: 'object',
     description: '子插件配置集合',
     meta: {},
-    dict: {
-      notifier: {
-        type: 'object',
-        description: '通知插件配置',
-        meta: {},
-        dict: {
-          enabled: {
-            type: 'boolean',
-            description: '启用通知插件',
-            meta: { volatile: true },
-          },
-          locale: {
-            type: 'string',
-            description: '语言设置 (auto | zh | en)',
-            meta: { volatile: true },
-          },
-          desktop: {
-            type: 'object',
-            description: '系统桌面弹窗',
-            meta: {},
-            dict: {
-              enabled: {
-                type: 'boolean',
-                description: '开启桌面弹窗',
-                meta: { volatile: true },
-              },
-            },
-          },
-          sound: {
-            type: 'object',
-            description: '系统提示音',
-            meta: {},
-            dict: {
-              enabled: {
-                type: 'boolean',
-                description: '开启系统提示音',
-                meta: { volatile: true },
-              },
-            },
-          },
-          events: {
-            type: 'object',
-            description: '事件通知与耗时过滤',
-            meta: {},
-            dict: {
-              onTurnEnd: {
-                type: 'boolean',
-                description: '任务完成时通知',
-                meta: { volatile: true },
-              },
-              onQuestion: {
-                type: 'boolean',
-                description: '等待提问时通知',
-                meta: { volatile: true },
-              },
-              onApproval: {
-                type: 'boolean',
-                description: '权限审批时通知',
-                meta: { volatile: true },
-              },
-              onError: {
-                type: 'boolean',
-                description: '任务异常时通知',
-                meta: { volatile: true },
-              },
-              minDurationSeconds: {
-                type: 'number',
-                description: '任务完成过滤阈值 (秒)',
-                meta: { volatile: true },
-              },
-            },
-          },
-          webhook: {
-            type: 'object',
-            description: 'Webhook 离机推送',
-            meta: {},
-            dict: {
-              enabled: {
-                type: 'boolean',
-                description: '开启 Webhook 推送',
-                meta: { volatile: true },
-              },
-              provider: {
-                type: 'string',
-                description: '渠道类型 (feishu | dingtalk | wecom | bark | telegram | discord | generic)',
-                meta: { volatile: true },
-              },
-              url: {
-                type: 'string',
-                description: 'Webhook 机器人地址',
-                meta: { volatile: true },
-              },
-              secret: {
-                type: 'string',
-                description: '签名密钥 / Chat ID (可选)',
-                meta: { volatile: true },
-              },
-            },
-          },
-        },
-      },
-      'subagent-model-indicator': {
-        type: 'object',
-        description: '子智能体模型指示器配置',
-        meta: {},
-        dict: {
-          enabled: {
-            type: 'boolean',
-            description: '启用子智能体模型指示器',
-            meta: { volatile: true },
-          },
-        },
-      },
-    },
+    dict: {},
   },
 };
 
@@ -295,12 +184,18 @@ function cloneSchemaNode(node: SchemaNode): SchemaNode {
 }
 
 /**
- * 为 Schema 树中的**每个**节点挂载 `toJSON()`。
+ * 为 Schema 树中的**每个**节点归一化 `meta` 并挂载 `toJSON()`。
+ *
+ * `meta` 兜底不可省略：DSH 的 `isVolatilePath()` 与 `volatileForm()` 会无条件读取
+ * `node.meta.volatile`。`registerPluginSchema()` 接收的是**子插件导出的对象**，
+ * 无法保证对方每个叶子都带 `meta`；缺一个节点就会让用户编辑该字段时抛 `TypeError`，
+ * 整个设置面板随之崩溃。这里统一补齐 `meta: {}`（不可热改），把第三方输入的信任面收敛掉。
  *
  * 仅 volatile 节点会被 `plainSchema()` 调用 `toJSON()`，但统一挂载可避免
  * 「给层级节点加 volatile」或未来 DSH 扩大调用面时出现难以定位的崩溃。
  */
 function attachToJSON(node: SchemaNode): SchemaNode {
+  if (!node.meta || typeof node.meta !== 'object') node.meta = {};
   for (const child of Object.values(node.dict ?? {})) attachToJSON(child);
   node.toJSON = () => cloneSchemaNode(node);
   return node;
@@ -326,39 +221,42 @@ export function registerPluginSchema(
   const pluginsDict = SCHEMA_DICT.plugins?.dict;
   if (!pluginsDict) return;
 
-  // 若子插件已有完整 Schema
-  if (schemaOrDict && typeof schemaOrDict === 'object') {
-    let nodeToAttach: SchemaNode;
-    if ('dict' in schemaOrDict && schemaOrDict.dict) {
-      nodeToAttach = {
+  // 子插件导出的 `Config` 既可能是普通对象，也可能是**函数**（`Object.assign(fn, {...})`
+  // 是 Schemastery 的常见写法，本仓库两个子插件都如此）。只判 `typeof === 'object'`
+  // 会把函数型 Schema 全部漏掉，退化成「只有一个 enabled 开关」的兜底节点 ——
+  // 后果不只是表单少几个字段：物化时建立的 volatile 引用数会变成 0，
+  // 而 `LoaderEntry._commitVolatile()` 在引用集合为空时会**立即返回**，
+  // 导致整次设置表单保存被静默丢弃、界面毫无反应（无报错、无日志）。
+  const source = schemaOrDict as any;
+  if (source && (typeof source === 'object' || typeof source === 'function')) {
+    // 函数型 Config 的字段表挂在 `dict` 上，普通对象则可能本身就是字段表
+    const dict = source.dict ?? (typeof source === 'function' ? undefined : source);
+    if (dict && typeof dict === 'object') {
+      const fields = dict as Record<string, SchemaNode>;
+      const nodeToAttach: SchemaNode = {
         type: 'object',
-        description: schemaOrDict.description || `${pluginKey} 插件配置`,
-        meta: { ...(schemaOrDict.meta || {}) },
-        dict: schemaOrDict.dict as Record<string, SchemaNode>,
+        description: source.description || `${pluginKey} 插件配置`,
+        meta: { ...(source.meta || {}) },
+        // 确保包含 enabled 开关（聚合总线用 `enabled` 控制子插件装载，必须始终可编辑）
+        dict: fields.enabled
+          ? fields
+          : {
+              enabled: {
+                type: 'boolean',
+                description: `启用 ${pluginKey} 插件`,
+                meta: { volatile: true },
+              },
+              ...fields,
+            },
       };
-    } else {
-      nodeToAttach = {
-        type: 'object',
-        description: `${pluginKey} 插件配置`,
-        meta: {},
-        dict: schemaOrDict as Record<string, SchemaNode>,
-      };
+      attachToJSON(nodeToAttach);
+      pluginsDict[pluginKey] = nodeToAttach;
+      return;
     }
-    // 确保包含 enabled 开关
-    if (nodeToAttach.dict && !nodeToAttach.dict.enabled) {
-      nodeToAttach.dict = {
-        enabled: {
-          type: 'boolean',
-          description: `启用 ${pluginKey} 插件`,
-          meta: { volatile: true },
-        },
-        ...nodeToAttach.dict,
-      };
-    }
-    attachToJSON(nodeToAttach);
-    pluginsDict[pluginKey] = nodeToAttach;
-  } else if (!pluginsDict[pluginKey]) {
-    // 默认兜底开关
+  }
+
+  // 无可用 Schema：仅在尚无该插件节点时补一个默认开关
+  if (!pluginsDict[pluginKey]) {
     const defaultNode: SchemaNode = {
       type: 'object',
       description: `${pluginKey} 插件配置`,
@@ -399,7 +297,13 @@ const SCHEMA_ROOT: SchemaNode = {
  * 因此这里为每个 Schema 声明的 volatile 路径无条件占位，保证引用集合恒非空，
  * 且新旧配置结构完全同构（`compareConfig` 才能稳定判定为「仅 volatile 变更」）。
  *
- * Schema 未声明的键原样透传（例如尚未在 Schema 中登记的子插件配置切片），不做裁剪。
+ * Schema 未声明的键**同样建立叶子级引用**（而非原样透传）。
+ *
+ * 这一条至关重要：子插件导出的 `Config` 未必涵盖用户实际写入的全部字段
+ * （版本更新后新增的键、手写配置里的额外键、或子插件只导出了部分 Schema）。
+ * 若对未声明的键走 `clonePlain()` 透传，那些字段就没有引用，宿主
+ * `_commitVolatile()` 比对时看不到它们的路径 → **用户对这些字段的修改被静默丢弃**。
+ * 按值本身的形状逐叶建引用，可保证任意形状的配置都具备完整的热改通道。
  */
 function materializeVolatile(value: unknown, node: SchemaNode): any {
   if (node.meta?.volatile) {
@@ -422,7 +326,7 @@ function materializeVolatile(value: unknown, node: SchemaNode): any {
 
     for (const [key, item] of Object.entries(source)) {
       const child = node.dict[key];
-      result[key] = child ? materializeVolatile(item, child) : clonePlain(item);
+      result[key] = child ? materializeVolatile(item, child) : materializeUndeclared(item);
     }
     // Schema 已声明但用户尚未填写的字段同样占位，避免引用集合为空导致保存被丢弃
     for (const [key, child] of Object.entries(node.dict)) {
@@ -435,17 +339,49 @@ function materializeVolatile(value: unknown, node: SchemaNode): any {
 }
 
 /**
+ * 递归地把「Schema 未声明」的子树整体物化为叶子级 volatile 引用。
+ *
+ * 仅在 `validate()` 的兜底路径使用：此时子插件 Schema 尚未注册，
+ * 我们无从得知字段结构，只能按值本身的形状逐叶建立引用。
+ * 叶级（而非整棵切片一个引用）保证与 Schema 注册后 `materializeVolatile()`
+ * 产出的引用**路径完全一致**，宿主 `_commitVolatile()` 才能正确比对与回写。
+ */
+function materializeUndeclared(value: unknown): any {
+  if (Array.isArray(value)) return value.map(materializeUndeclared);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, materializeUndeclared(item)]),
+    );
+  }
+  try {
+    return createVolatileRef(value);
+  } catch {
+    // 快照失败（函数 / 循环引用 / 类实例）降级为原始值，不阻断启动
+    return value;
+  }
+}
+
+/**
  * 校验并物化 DSH Profile 传入的配置（Standard Schema v1，同步实现）。
  *
  * Cordis v4 在插件启动前同步调用 `Config['~standard'].validate(config)` 并读取
  * `result.value`，因此这里严禁返回 Promise，否则 Cordis 会直接抛
  * `Async config validation is not supported`。
  *
+ * **时序陷阱（务必保留下面的兜底占位）：** `validate()` 由 Cordis 在 `_reload()` 中
+ * **先于** `apply()` 执行，而子插件的 Schema 是在 `apply()` 里经 `registerPluginSchema()`
+ * 才注册进来的。也就是说校验这一刻 `SCHEMA_DICT` 里通常**一个子插件字段都没有**，
+ * 若只按 Schema 声明物化，`volatileEntries(fiber.config)` 会返回空数组，
+ * 于是 `_commitVolatile()` 直接返回、整次设置表单保存被**静默丢弃**（无报错、无日志）。
+ * 因此这里对「配置中实际出现的每个子插件切片」无条件建立叶子级引用占位，
+ * 与 Schema 是否已注册无关。
+ *
  * 非法输入（`null` / 字符串 / 数字）降级为空对象后再物化，
  * 保持「宽松降级、永不产生 issues」的既有契约。
  */
 function validateConfig(value: unknown): UmbrellaLoaderConfig {
   const source = value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  // 未声明的字段由 materializeVolatile() 内部逐叶建立引用（见其注释），此处无需二次遍历
   return materializeVolatile(source, SCHEMA_ROOT) as UmbrellaLoaderConfig;
 }
 
