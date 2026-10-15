@@ -7,12 +7,30 @@ import { fileURLToPath } from 'node:url';
 
 import {
   Config,
+  SCHEMA_DICT,
   deepMerge,
   getPluginConfig,
   interpolateEnvVariables,
   loadUmbrellaConfig,
+  registerPluginSchema,
   resolveVolatileRefs,
 } from '../src/config.ts';
+import { Config as NotifierConfig } from '../dsh-notifier/src/config.ts';
+
+/**
+ * 注册本仓库真实子插件的 Schema。
+ *
+ * 根 `SCHEMA_DICT` 已改为**空字典 + 动态注册**（消除与子插件重复维护的第二份真相），
+ * 因此断言表单投影的用例必须先执行与生产启动路径相同的注册步骤。
+ * 这里刻意导入子插件**真实的** `Config`（而非手写替身），
+ * 才能同时锁住「函数型 Config 也能被正确识别」这一契约 ——
+ * 只判 `typeof === 'object'` 的旧实现会把它们全部漏掉。
+ *
+ * `dsh-subagent-model-indicator` 未导出 `Config`，走「自动补默认 enabled 开关」路径，
+ * 同样在此登记以覆盖该分支。
+ */
+registerPluginSchema('notifier', NotifierConfig);
+registerPluginSchema('subagent-model-indicator');
 
 /** 拦截 console.warn，收集告警文本并在回调结束后还原 */
 function captureWarnings(fn: () => void): string[] {
@@ -305,7 +323,8 @@ test('Config.toJSON(): 返回 plain 结构且与模块级 SCHEMA_DICT 结构一�
   );
   assert.equal(
     plain.dict.plugins.dict.notifier.dict.webhook.dict.secret.description,
-    '签名密钥 / Chat ID (可选)',
+    '签名密钥（可选）；telegram 渠道下作为 chat_id',
+    '表单字段说明直接来自子插件导出的 Schema —— 单一真相，根总线不再维护副本',
   );
 });
 
@@ -803,4 +822,93 @@ test('registerPluginSchema: 动态并入子插件 Schema 或生成默认 enabled
   assert.ok(nodeB.dict?.enabled, '应当自动补齐 enabled 开关');
   assert.ok(nodeB.dict?.customField, '应当保留自定义字段');
   assert.equal(typeof nodeB.toJSON, 'function');
+});
+
+test('registerPluginSchema: 函数型 Config（Object.assign 形态）必须被识别，不得退化成兜底开关', () => {
+  // 本仓库两个子插件导出的 Config 都是 `Object.assign(function(){}, {...})`，
+  // 即 typeof === 'function'。只判 `typeof === 'object'` 的旧实现会把它们全部漏掉，
+  // 结果是表单只剩一个 enabled 开关，且物化时建立的 volatile 引用数为 0 ——
+  // 后者会让宿主 `_commitVolatile()` 直接返回，**整次保存被静默丢弃**。
+  const functionShaped: any = Object.assign(
+    function validate() {},
+    {
+      type: 'object',
+      description: '函数型插件配置',
+      meta: {},
+      dict: {
+        alpha: { type: 'boolean', description: '字段甲', meta: { volatile: true } },
+        nested: {
+          type: 'object',
+          description: '嵌套层',
+          meta: {},
+          dict: {
+            beta: { type: 'string', description: '字段乙', meta: { volatile: true } },
+          },
+        },
+      },
+    },
+  );
+
+  registerPluginSchema('function-shaped', functionShaped);
+
+  const node: any = SCHEMA_DICT.plugins?.dict?.['function-shaped'];
+  assert.ok(node, '函数型 Config 必须被挂载');
+  assert.ok(node.dict?.alpha, '函数型 Config 的字段表必须被完整保留');
+  assert.ok(node.dict?.nested?.dict?.beta, '嵌套层级同样不得丢失');
+  assert.ok(node.dict?.enabled, '仍应自动补齐 enabled 开关');
+  assert.equal(node.description, '函数型插件配置', '应沿用子插件自己声明的 description');
+});
+
+test('registerPluginSchema: 子插件 Schema 叶子缺 meta 时自动补齐（否则编辑该字段会崩掉整个设置面板）', () => {
+  // DSH 的 isVolatilePath() 会无条件读取 node.meta.volatile，
+  // 而 registerPluginSchema 接收的是**子插件导出的对象**，无法保证对方每个叶子都带 meta。
+  registerPluginSchema('missing-meta', {
+    bareField: { type: 'string', description: '没有 meta 的叶子' },
+  });
+
+  const leaf: any = SCHEMA_DICT.plugins?.dict?.['missing-meta']?.dict?.bareField;
+  assert.ok(leaf, '字段必须被挂载');
+  assert.deepEqual(leaf.meta, {}, '缺失的 meta 必须补成空对象，绝不能留 undefined');
+
+  // 复刻 isVolatilePath 的读取路径：缺 meta 时这里会抛 TypeError
+  assert.doesNotThrow(() => {
+    const walk = (node: any): void => {
+      if (node.meta.volatile) return;
+      for (const child of Object.values<any>(node.dict ?? {})) walk(child);
+    };
+    walk(Config.dict.plugins.dict['missing-meta']);
+  }, '补齐 meta 后，表单路径校验不得抛错');
+});
+
+test('Config 物化: Schema 未注册时也必须建立 volatile 引用（否则表单保存被宿主静默丢弃）', async () => {
+  // 时序：Cordis 在 _reload() 中先调 validate()、后调 apply()，
+  // 而子插件 Schema 是在 apply() 里才注册的。校验那一刻 SCHEMA_DICT 里
+  // 通常一个子插件字段都没有，若只按 Schema 声明物化，
+  // volatileEntries(fiber.config) 会返回空数组 → _commitVolatile() 直接返回
+  // → 整次保存被静默丢弃（无报错、无日志）。
+  const { Config: FreshConfig } = await import('../src/config.ts');
+  const { isVolatileRef } = await import('../src/config.ts');
+
+  const collectRefs = (value: any, prefix = ''): string[] => {
+    if (isVolatileRef(value)) return [prefix];
+    if (value === null || typeof value !== 'object') return [];
+    return Object.entries(value).flatMap(([key, child]) =>
+      collectRefs(child, prefix ? `${prefix}.${key}` : key),
+    );
+  };
+
+  // 用一个**全新**的插件键，模拟「Schema 尚未注册」的启动瞬间
+  const materialized: any = FreshConfig['~standard'].validate({
+    plugins: { 'not-yet-registered': { enabled: true, webhook: { secret: 's' } } },
+  }).value;
+
+  const refs = collectRefs(materialized);
+  assert.ok(
+    refs.length > 0,
+    `未注册的子插件切片也必须建立 volatile 引用占位，实际为 ${refs.length} 个`,
+  );
+  assert.ok(
+    refs.includes('plugins.not-yet-registered.webhook.secret'),
+    '叶子级引用路径必须与 Schema 注册后的物化结果一致，宿主才能正确比对回写',
+  );
 });

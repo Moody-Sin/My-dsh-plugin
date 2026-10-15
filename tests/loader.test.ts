@@ -213,7 +213,22 @@ test('loader: 导出符合规范的 Cordis 插件接口', () => {
 test('loader: resolveProjectRoot 能唯一定位仓库根目录', () => {
   const root = resolveProjectRoot();
   assert.ok(root);
-  assert.match(root, /My-dsh-plugin/i);
+  // 断言定位**依据**而非目录名：仓库可能被 clone 到任意目录名，
+  // 而 resolveProjectRoot() 认的是「包名」或「存在 plugins.config.json」这两个根标志。
+  assert.ok(
+    fs.existsSync(path.join(root, 'plugins.config.json')),
+    `定位到的根目录必须含 plugins.config.json，实际: ${root}`,
+  );
+  const pkgRaw = fs.readFileSync(path.join(root, 'package.json'), 'utf8').replace(/^\uFEFF/, '');
+  assert.equal(
+    JSON.parse(pkgRaw).name,
+    '@local/my-dsh-plugins',
+    '定位到的根目录必须是聚合总线包本身',
+  );
+  assert.ok(
+    fs.existsSync(path.join(root, 'src', 'index.ts')),
+    '根目录必须含加载器源码 src/index.ts',
+  );
 });
 
 test('loader: apply 正确挂载子插件并剥离 enabled 元字段', async (t) => {
