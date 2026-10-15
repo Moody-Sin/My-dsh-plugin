@@ -556,7 +556,7 @@ function NotifierCard({
           },
           testStatus?.loading ? "\u6B63\u5728\u6D4B\u8BD5\u901A\u77E5..." : "\u26A1 \u53D1\u9001\u6D4B\u8BD5\u901A\u77E5"
         ),
-        testStatus?.result && /* @__PURE__ */ import_react.default.createElement("span", { style: { fontSize: "12px", color: "#4ade80" } }, "\u2705 \u6D4B\u8BD5\u8BF7\u6C42\u5DF2\u6267\u884C"),
+        testStatus?.result && /* @__PURE__ */ import_react.default.createElement("span", { style: { fontSize: "12px", color: "#4ade80" } }, "\u2705 ", testStatus.result.message || "\u6D4B\u8BD5\u901A\u77E5\u5DF2\u53D1\u9001"),
         testStatus?.error && /* @__PURE__ */ import_react.default.createElement("span", { style: { fontSize: "12px", color: "#f87171" } }, "\u274C ", testStatus.error)
       )
     )
@@ -684,6 +684,7 @@ function ModelIndicatorCard({
 
 // src/ui/SettingsTab.tsx
 function SettingsTab() {
+  const [layers, setLayers] = (0, import_react3.useState)(null);
   const [config, setConfig] = (0, import_react3.useState)(null);
   const [target, setTarget] = (0, import_react3.useState)("local");
   const [loading, setLoading] = (0, import_react3.useState)(false);
@@ -692,23 +693,37 @@ function SettingsTab() {
   const [testStatus, setTestStatus] = (0, import_react3.useState)({
     loading: false
   });
+  const emptyLayer = { plugins: {} };
   const fetchConfig = async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/local-plugins/config");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setConfig(data.merged || { plugins: {} });
+      const next = {
+        base: data.base || emptyLayer,
+        local: data.local || emptyLayer
+      };
+      setLayers(next);
       setMessage(null);
+      return next;
     } catch (err) {
       setMessage({ text: `\u52A0\u8F7D\u914D\u7F6E\u5931\u8D25: ${err.message}`, error: true });
+      return null;
     } finally {
       setLoading(false);
     }
   };
   (0, import_react3.useEffect)(() => {
-    fetchConfig();
+    void fetchConfig().then((next) => {
+      if (next) setConfig(next.local);
+    });
   }, []);
+  const handleTargetChange = (next) => {
+    setTarget(next);
+    setMessage(null);
+    if (layers) setConfig(next === "base" ? layers.base : layers.local);
+  };
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -717,12 +732,17 @@ function SettingsTab() {
       const res = await fetch("/api/local-plugins/config", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        // 提交的就是目标层自身的内容，不含另一层的任何字段
         body: JSON.stringify({ target, config })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
       setMessage({
-        text: `\u2705 \u914D\u7F6E\u5DF2\u6210\u529F\u4FDD\u5B58\u81F3 ${target === "local" ? "plugins.config.local.json" : "plugins.config.json"} \u5E76\u5373\u65F6\u70ED\u751F\u6548\uFF01`
+        text: data?.message || `\u2705 \u914D\u7F6E\u5DF2\u4FDD\u5B58\u81F3 ${target === "local" ? "plugins.config.local.json" : "plugins.config.json"} \u5E76\u5373\u65F6\u70ED\u751F\u6548\uFF01`,
+        error: data?.ok === false
       });
+      const next = await fetchConfig();
+      if (next) setConfig(target === "base" ? next.base : next.local);
     } catch (err) {
       setMessage({ text: `\u4FDD\u5B58\u5931\u8D25: ${err.message}`, error: true });
     } finally {
@@ -735,8 +755,14 @@ function SettingsTab() {
       const res = await fetch("/api/local-plugins/test-notify", {
         method: "POST"
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        setTestStatus({
+          loading: false,
+          error: data?.message || data?.error || `HTTP ${res.status}`
+        });
+        return;
+      }
       setTestStatus({ loading: false, result: data });
     } catch (err) {
       setTestStatus({ loading: false, error: err.message });
@@ -770,13 +796,13 @@ function SettingsTab() {
           borderBottom: "0.5px solid var(--dsw-alias-border-l2, #333)"
         }
       },
-      /* @__PURE__ */ import_react3.default.createElement("div", null, /* @__PURE__ */ import_react3.default.createElement("div", { style: { fontSize: "18px", fontWeight: 600 } }, "\u672C\u5730\u63D2\u4EF6\u53C2\u6570\u914D\u7F6E"), /* @__PURE__ */ import_react3.default.createElement("div", { style: { fontSize: "13px", color: "var(--dsw-alias-label-tertiary, #888)" } }, "\u7EDF\u4E00\u7BA1\u7406\u672C\u5730\u805A\u5408\u63D2\u4EF6\u7684\u8FD0\u884C\u53C2\u6570\uFF0C\u4FDD\u5B58\u540E\u65E0\u9700\u91CD\u542F DSH \u81EA\u52A8\u70ED\u751F\u6548\u3002")),
+      /* @__PURE__ */ import_react3.default.createElement("div", null, /* @__PURE__ */ import_react3.default.createElement("div", { style: { fontSize: "18px", fontWeight: 600 } }, "\u672C\u5730\u63D2\u4EF6\u53C2\u6570\u914D\u7F6E"), /* @__PURE__ */ import_react3.default.createElement("div", { style: { fontSize: "13px", color: "var(--dsw-alias-label-tertiary, #888)" } }, "\u9009\u62E9\u8981\u7F16\u8F91\u7684\u914D\u7F6E\u5C42\uFF0C\u4FDD\u5B58\u540E\u65E0\u9700\u91CD\u542F DSH \u81EA\u52A8\u70ED\u751F\u6548\u3002")),
       /* @__PURE__ */ import_react3.default.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px" } }, /* @__PURE__ */ import_react3.default.createElement(
         "select",
         {
           value: target,
-          onChange: (e) => setTarget(e.target.value),
-          title: "\u4FDD\u5B58\u4F4D\u7F6E\uFF1Alocal \u4E3A\u79C1\u6709\u8986\u76D6\uFF08\u542B Secret\uFF0C\u4E0D\u8FDB Git\uFF09\uFF1Bbase \u4E3A\u57FA\u7840\u9ED8\u8BA4\u914D\u7F6E",
+          onChange: (e) => handleTargetChange(e.target.value),
+          title: "local \u4E3A\u79C1\u6709\u8986\u76D6\uFF08\u542B Secret\uFF0C\u4E0D\u8FDB Git\uFF09\uFF1Bbase \u4E3A\u57FA\u7840\u9ED8\u8BA4\u914D\u7F6E\uFF08\u968F Git \u63D0\u4EA4\uFF09",
           style: {
             background: "var(--dsw-alias-bg-layer-1, #242424)",
             color: "var(--dsw-alias-label-primary, #fff)",
@@ -786,8 +812,8 @@ function SettingsTab() {
             fontSize: "12px"
           }
         },
-        /* @__PURE__ */ import_react3.default.createElement("option", { value: "local" }, "\u4FDD\u5B58\u81F3 local.json (\u79C1\u6709\u63A8\u8350)"),
-        /* @__PURE__ */ import_react3.default.createElement("option", { value: "base" }, "\u4FDD\u5B58\u81F3 config.json (\u5171\u4EAB\u63D0\u4EA4)")
+        /* @__PURE__ */ import_react3.default.createElement("option", { value: "local" }, "\u7F16\u8F91 local.json (\u79C1\u6709\uFF0C\u4E0D\u8FDB Git)"),
+        /* @__PURE__ */ import_react3.default.createElement("option", { value: "base" }, "\u7F16\u8F91 config.json (\u5171\u4EAB\u63D0\u4EA4)")
       ), /* @__PURE__ */ import_react3.default.createElement(
         "button",
         {
@@ -839,7 +865,6 @@ var name = "my-dsh-plugins-client";
 var inject = ["slots"];
 function apply(ctx) {
   setupSettingsSlot(ctx, import_react4.default);
-  mountDirectSlot();
 }
 function registerSettingsUI() {
   const PLUGIN_ID = "@local/my-dsh-plugins";
@@ -848,68 +873,37 @@ function registerSettingsUI() {
   if (w.__my_dsh_plugins_settings_ui_registered__) return;
   w.__my_dsh_plugins_settings_ui_registered__ = true;
   const ml = w.__ModuleLoader__;
-  if (ml?.load) {
-    const alreadyInQueue = ml.mode === "queue" && Array.isArray(ml.pendingQueue) && ml.pendingQueue.some((reg) => reg.id === PLUGIN_ID);
-    if (!alreadyInQueue) {
-      try {
-        ml.load({
-          id: PLUGIN_ID,
-          factory(require2) {
-            const ReactMod = require2("react");
-            return {
-              name,
-              inject,
-              apply(ctx) {
-                setupSettingsSlot(ctx, ReactMod);
-                mountDirectSlot();
-              }
-            };
-          }
-        });
-      } catch {
-      }
+  if (!ml?.load) return;
+  const alreadyInQueue = ml.mode === "queue" && Array.isArray(ml.pendingQueue) && ml.pendingQueue.some((reg) => reg.id === PLUGIN_ID);
+  if (alreadyInQueue) return;
+  ml.load({
+    id: PLUGIN_ID,
+    factory(require2) {
+      const ReactMod = require2("react");
+      return {
+        name,
+        inject,
+        apply(ctx) {
+          setupSettingsSlot(ctx, ReactMod);
+        }
+      };
     }
-  }
-  if (typeof document !== "undefined") {
-    mountDirectSlot();
-  }
+  });
 }
 function setupSettingsSlot(ctx, ReactMod) {
-  try {
-    ctx.slots.inject(
-      "settings.plugins.tab",
-      () => ctx.slots.register(
-        {
-          name: "settings.plugins.tab",
-          id: "local-plugins-config",
-          order: 5,
-          // 排在官方只读清单前面
-          label: () => "\u53C2\u6570\u914D\u7F6E"
-        },
-        () => ReactMod.createElement(SettingsTab, null)
-      )
-    );
-  } catch (err) {
-  }
-}
-function mountDirectSlot() {
-  try {
-    const w = window;
-    const slotService = w.__DSH_SLOTS__ || w.__dsh_slots__;
-    if (slotService?.register && !w.__my_dsh_plugins_tab_direct_registered__) {
-      w.__my_dsh_plugins_tab_direct_registered__ = true;
-      slotService.register(
-        {
-          name: "settings.plugins.tab",
-          id: "local-plugins-config",
-          order: 5,
-          label: "\u53C2\u6570\u914D\u7F6E"
-        },
-        () => import_react4.default.createElement(SettingsTab, null)
-      );
-    }
-  } catch {
-  }
+  ctx.slots.inject(
+    "settings.plugins.tab",
+    () => ctx.slots.register(
+      {
+        name: "settings.plugins.tab",
+        id: "local-plugins-config",
+        order: 5,
+        // 排在官方只读清单前面
+        label: () => "\u53C2\u6570\u914D\u7F6E"
+      },
+      () => ReactMod.createElement(SettingsTab, null)
+    )
+  );
 }
 registerSettingsUI();
           return module.exports;

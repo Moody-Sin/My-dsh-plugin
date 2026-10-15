@@ -463,7 +463,7 @@ export function NotifierCard({
             </button>
             {testStatus?.result && (
               <span style={{ fontSize: '12px', color: '#4ade80' }}>
-                ✅ 测试请求已执行
+                ✅ {testStatus.result.message || '测试通知已发送'}
               </span>
             )}
             {testStatus?.error && (
