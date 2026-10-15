@@ -14,7 +14,71 @@ export interface ConfigReadResult {
 }
 
 /**
+ * 需要脱敏的字段名：这些值可能来自 `plugins.config.local.json`（随 Git 提交的白名单之外）。
+ *
+ * 官方设置表单有自己的 `redactSecrets()`，而本仓库的自研 UI 绕开了它，
+ * 因此这里必须自行脱敏，否则密钥会以明文在网络响应里往返并进入浏览器 DOM。
+ */
+const SECRET_FIELD_NAMES = new Set(['secret', 'token', 'password', 'apiKey', 'api_key']);
+
+/** 掩码占位符：前端回传该值时表示「不修改」，绝不落盘覆盖真实密钥。 */
+export const SECRET_MASK = '••••••••';
+
+/**
+ * 深拷贝配置树并把敏感字段替换为掩码。
+ *
+ * 仅对字符串值脱敏：密钥可能是任意层级的对象字段，逐层递归覆盖所有插件切片。
+ */
+function redactSecrets(value: any): any {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value === null || typeof value !== 'object') return value;
+
+  const result: Record<string, any> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (SECRET_FIELD_NAMES.has(key) && typeof item === 'string' && item !== '') {
+      result[key] = SECRET_MASK;
+    } else {
+      result[key] = redactSecrets(item);
+    }
+  }
+  return result;
+}
+
+/**
+ * 合并时保留未修改的密钥。
+ *
+ * 前端把掩码原样回传（表示用户没动这个字段），此时必须以磁盘上已有的值为准，
+ * 否则「保存一次就把密钥写成一串圆点」。
+ */
+function restoreSecrets(incoming: any, existing: any): any {
+  if (Array.isArray(incoming)) {
+    return Array.isArray(existing)
+      ? incoming.map((item, index) => restoreSecrets(item, existing[index]))
+      : incoming;
+  }
+  if (incoming === null || typeof incoming !== 'object') return incoming;
+  if (existing === null || typeof existing !== 'object') return incoming;
+
+  const result: Record<string, any> = {};
+  for (const [key, item] of Object.entries(incoming)) {
+    if (SECRET_FIELD_NAMES.has(key) && item === SECRET_MASK) {
+      // 掩码回传且磁盘上已有真实值 → 沿用磁盘值；否则视为用户主动清空。
+      if (typeof existing[key] === 'string' && existing[key] !== '') {
+        result[key] = existing[key];
+        continue;
+      }
+      result[key] = '';
+      continue;
+    }
+    result[key] = restoreSecrets(item, existing[key]);
+  }
+  return result;
+}
+
+/**
  * 读取当前目录下的公开基础配置与本地覆盖配置，并执行深层合并。
+ *
+ * 返回值**已脱敏**：`base` / `local` / `merged` 三份中的敏感字段均为掩码。
  */
 export function readMergedConfig(projectRoot: string): ConfigReadResult {
   let base: UmbrellaLoaderConfig = {};
@@ -42,7 +106,11 @@ export function readMergedConfig(projectRoot: string): ConfigReadResult {
   }
 
   const merged = deepMerge(base, local) as UmbrellaLoaderConfig;
-  return { base, local, merged };
+  return {
+    base: redactSecrets(base),
+    local: redactSecrets(local),
+    merged: redactSecrets(merged),
+  };
 }
 
 /**
@@ -67,7 +135,7 @@ export function writeConfigFile(
     }
   }
 
-  const next = deepMerge(existing, partialConfig);
+  const next = deepMerge(existing, restoreSecrets(partialConfig, existing));
   const serialized = JSON.stringify(next, null, 2) + '\n';
 
   const tmpPath = path.join(projectRoot, `.${filename}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
