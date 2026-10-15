@@ -765,7 +765,7 @@ async function apply(ctx, config) {
       try {
         if (!Array.isArray(table)) return;
         const alreadyInjected = table.some(
-          (row) => row?.kind === "script" && typeof row?.text === "string" && row.text.includes("@local/my-dsh-plugins/settings-ui")
+          (row) => row?.kind === "script" && typeof row?.text === "string" && row.text.includes("@local/my-dsh-plugins")
         );
         if (alreadyInjected) return;
         if (fs4.existsSync(clientBundlePath)) {

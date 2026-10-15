@@ -423,7 +423,7 @@ export async function apply(ctx: any, config?: any): Promise<void> {
           (row) =>
             row?.kind === 'script' &&
             typeof row?.text === 'string' &&
-            row.text.includes('@local/my-dsh-plugins/settings-ui'),
+            row.text.includes('@local/my-dsh-plugins'),
         );
         if (alreadyInjected) return;
 

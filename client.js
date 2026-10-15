@@ -812,7 +812,7 @@
 
   // src/client.tsx
   function registerSettingsUI() {
-    const PLUGIN_ID = "@local/my-dsh-plugins/settings-ui";
+    const PLUGIN_ID = "@local/my-dsh-plugins";
     if (typeof window === "undefined") return;
     const w = window;
     if (w.__my_dsh_plugins_settings_ui_registered__) return;

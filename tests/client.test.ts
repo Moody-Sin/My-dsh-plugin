@@ -8,6 +8,6 @@ describe('Client Script Bundle', () => {
     const clientTs = fs.readFileSync(path.join(process.cwd(), 'src/client.tsx'), 'utf8');
     assert.ok(clientTs.includes('settings.plugins.tab'));
     assert.ok(clientTs.includes('__ModuleLoader__'));
-    assert.ok(clientTs.includes('@local/my-dsh-plugins/settings-ui'));
+    assert.ok(clientTs.includes('@local/my-dsh-plugins'));
   });
 });

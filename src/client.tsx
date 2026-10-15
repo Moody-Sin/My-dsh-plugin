@@ -8,7 +8,7 @@ declare const document: any;
  * 客户端浏览器 bundle 入口：通过 __ModuleLoader__.load 注册设置标签页。
  */
 export function registerSettingsUI() {
-  const PLUGIN_ID = '@local/my-dsh-plugins/settings-ui';
+  const PLUGIN_ID = '@local/my-dsh-plugins';
 
   if (typeof window === 'undefined') return;
   const w = window as any;
