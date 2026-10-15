@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { handleApiRequest } from './api.ts';
 import {
   BASE_CONFIG_FILENAME,
   Config,
@@ -378,6 +379,79 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     });
   } catch (error) {
     logger.warn('设置表单联动监听注册失败，表单变更需重启后生效:', error);
+  }
+
+  // ── 注册设置 UI 对应的 Web REST API 路由与前端脚本注入 ──────────────
+  try {
+    const apiHandler = async (req: any, res: any) => {
+      const handled = await handleApiRequest(req, res, {
+        projectRoot: rootDir,
+        logger,
+        onConfigSaved: () => {
+          logger.info('收到设置 UI 配置更新，触发热重载...');
+          queueReload('file');
+        },
+      });
+      if (!handled && !res.writableEnded) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('Not Found');
+      }
+    };
+
+    if (typeof ctx?.webServer?.register === 'function') {
+      ctx.effect?.(() => {
+        const unregisterExact = ctx.webServer.register({
+          kind: 'prefix',
+          path: '/api/local-plugins',
+          handler: apiHandler,
+        });
+        return () => {
+          unregisterExact?.();
+        };
+      });
+    }
+
+    // 通过 webserver/index-inject 注入客户端脚本
+    const clientBundlePath = fs.existsSync(path.join(rootDir, 'client.js'))
+      ? path.join(rootDir, 'client.js')
+      : path.join(path.dirname(fileURLToPath(import.meta.url)), 'client.js');
+
+    const onIndexInject = (table: any[]) => {
+      try {
+        if (!Array.isArray(table)) return;
+        const alreadyInjected = table.some(
+          (row) =>
+            row?.kind === 'script' &&
+            typeof row?.text === 'string' &&
+            row.text.includes('@local/my-dsh-plugins/settings-ui'),
+        );
+        if (alreadyInjected) return;
+
+        if (fs.existsSync(clientBundlePath)) {
+          const clientCode = fs.readFileSync(clientBundlePath, 'utf8');
+          table.push({
+            kind: 'script',
+            placement: 'body',
+            text: clientCode,
+          });
+        }
+      } catch (err) {
+        logger.warn('注入设置 UI 客户端脚本失败:', err);
+      }
+    };
+
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => {
+        const unlisten = ctx.on('webserver/index-inject', onIndexInject);
+        return () => {
+          unlisten?.();
+        };
+      });
+    } else {
+      ctx.on?.('webserver/index-inject', onIndexInject);
+    }
+  } catch (error) {
+    logger.warn('注册 Web API 与脚本注入异常:', error);
   }
 
   // 宿主卸载插件时必须注销监听并级联清理所有子插件 Fiber，

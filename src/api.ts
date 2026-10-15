@@ -74,3 +74,87 @@ export function writeConfigFile(
   fs.writeFileSync(tmpPath, serialized, 'utf8');
   fs.renameSync(tmpPath, filePath);
 }
+
+export interface ApiHandlerContext {
+  projectRoot: string;
+  logger: { info?: (...args: any[]) => void; warn?: (...args: any[]) => void; error?: (...args: any[]) => void };
+  onConfigSaved?: () => void;
+  triggerTestNotify?: () => Promise<any>;
+}
+
+/**
+ * 处理本地插件设置相关的 HTTP REST API 请求。
+ * 返回 true 表示该请求已被捕获并处理；false 表示非目标路由。
+ */
+export async function handleApiRequest(
+  req: any,
+  res: any,
+  ctx: ApiHandlerContext,
+): Promise<boolean> {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  const pathname = url.pathname;
+
+  // 1. 获取配置与插件信息
+  if (pathname === '/api/local-plugins/config' && req.method === 'GET') {
+    try {
+      const configData = readMergedConfig(ctx.projectRoot);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(JSON.stringify(configData));
+    } catch (err: any) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+
+  // 2. 保存配置并触发热重载
+  if (pathname === '/api/local-plugins/config' && req.method === 'POST') {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const raw = Buffer.concat(chunks).toString('utf8');
+      const body = JSON.parse(raw || '{}');
+      const target = body.target === 'base' ? 'base' : 'local';
+      const config = body.config || {};
+
+      writeConfigFile(ctx.projectRoot, target, config);
+      ctx.onConfigSaved?.();
+
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(JSON.stringify({ ok: true, target }));
+    } catch (err: any) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+
+  // 3. 触发通知连通性测试
+  if (pathname === '/api/local-plugins/test-notify' && req.method === 'POST') {
+    try {
+      let result: any = { ok: true, message: '通知测试已发送' };
+      if (typeof ctx.triggerTestNotify === 'function') {
+        result = await ctx.triggerTestNotify();
+      }
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(JSON.stringify(result));
+    } catch (err: any) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+
+  return false;
+}
