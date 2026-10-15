@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { handleApiRequest, handleFetchRequest } from './api.ts';
+import { handleFetchRequest } from './api.ts';
 import {
   BASE_CONFIG_FILENAME,
   Config,
@@ -392,35 +392,13 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       },
     };
 
-    const nodeHttpHandler = async (req: any, res: any) => {
-      const handled = await handleApiRequest(req, res, apiHandlerContext);
-      if (!handled && !res.writableEnded) {
-        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('Not Found');
-      }
-    };
-
-    // 1. 在 webServer 上注册前缀路由（直接 HTTP 管道）
-    const registerWebServerRoutes = (webCtx: any) => {
-      try {
-        if (typeof webCtx?.webServer?.register === 'function') {
-          webCtx.effect?.(() => {
-            const unregisterExact = webCtx.webServer.register({
-              kind: 'prefix',
-              path: '/api/local-plugins',
-              handler: nodeHttpHandler,
-            });
-            return () => {
-              unregisterExact?.();
-            };
-          });
-        }
-      } catch (err) {
-        logger.warn('注册 Web API 路由失败:', err);
-      }
-    };
-
-    // 2. 在 connection.fetch 上注册精确路由（DSH 浏览器端经由 /api 鉴权通道分发）
+    // 在 connection.fetch 上注册精确路由（DSH 浏览器端经由 /api 鉴权通道分发）。
+    //
+    // **绝不可同时在 `webServer` 上注册 `/api/local-plugins` 前缀**：DSH 的
+    // `client-connection` 已经在 `/api` 前缀上做了会话鉴权，而 `webServer.match()`
+    // 是「最长前缀胜出」，`/api/local-plugins` 必然抢在 `/api` 之前命中，
+    // 于是整个配置读写（含 local 层的 Webhook 密钥）会彻底绕过鉴权，
+    // 本机任意进程或任意网页的跨站表单都能读走密钥并改写配置。
     const registerConnectionRoutes = (connCtx: any) => {
       try {
         const fetchRegistry = connCtx?.connection?.fetch;
@@ -450,12 +428,8 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     };
 
     if (typeof ctx?.inject === 'function') {
-      ctx.inject(['webServer'], registerWebServerRoutes);
       ctx.inject(['connection'], registerConnectionRoutes);
     } else {
-      if (typeof ctx?.webServer?.register === 'function') {
-        registerWebServerRoutes(ctx);
-      }
       if (typeof ctx?.connection?.fetch?.register === 'function') {
         registerConnectionRoutes(ctx);
       }

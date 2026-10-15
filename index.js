@@ -64,120 +64,7 @@ var SCHEMA_DICT = {
     type: "object",
     description: "\u5B50\u63D2\u4EF6\u914D\u7F6E\u96C6\u5408",
     meta: {},
-    dict: {
-      notifier: {
-        type: "object",
-        description: "\u901A\u77E5\u63D2\u4EF6\u914D\u7F6E",
-        meta: {},
-        dict: {
-          enabled: {
-            type: "boolean",
-            description: "\u542F\u7528\u901A\u77E5\u63D2\u4EF6",
-            meta: { volatile: true }
-          },
-          locale: {
-            type: "string",
-            description: "\u8BED\u8A00\u8BBE\u7F6E (auto | zh | en)",
-            meta: { volatile: true }
-          },
-          desktop: {
-            type: "object",
-            description: "\u7CFB\u7EDF\u684C\u9762\u5F39\u7A97",
-            meta: {},
-            dict: {
-              enabled: {
-                type: "boolean",
-                description: "\u5F00\u542F\u684C\u9762\u5F39\u7A97",
-                meta: { volatile: true }
-              }
-            }
-          },
-          sound: {
-            type: "object",
-            description: "\u7CFB\u7EDF\u63D0\u793A\u97F3",
-            meta: {},
-            dict: {
-              enabled: {
-                type: "boolean",
-                description: "\u5F00\u542F\u7CFB\u7EDF\u63D0\u793A\u97F3",
-                meta: { volatile: true }
-              }
-            }
-          },
-          events: {
-            type: "object",
-            description: "\u4E8B\u4EF6\u901A\u77E5\u4E0E\u8017\u65F6\u8FC7\u6EE4",
-            meta: {},
-            dict: {
-              onTurnEnd: {
-                type: "boolean",
-                description: "\u4EFB\u52A1\u5B8C\u6210\u65F6\u901A\u77E5",
-                meta: { volatile: true }
-              },
-              onQuestion: {
-                type: "boolean",
-                description: "\u7B49\u5F85\u63D0\u95EE\u65F6\u901A\u77E5",
-                meta: { volatile: true }
-              },
-              onApproval: {
-                type: "boolean",
-                description: "\u6743\u9650\u5BA1\u6279\u65F6\u901A\u77E5",
-                meta: { volatile: true }
-              },
-              onError: {
-                type: "boolean",
-                description: "\u4EFB\u52A1\u5F02\u5E38\u65F6\u901A\u77E5",
-                meta: { volatile: true }
-              },
-              minDurationSeconds: {
-                type: "number",
-                description: "\u4EFB\u52A1\u5B8C\u6210\u8FC7\u6EE4\u9608\u503C (\u79D2)",
-                meta: { volatile: true }
-              }
-            }
-          },
-          webhook: {
-            type: "object",
-            description: "Webhook \u79BB\u673A\u63A8\u9001",
-            meta: {},
-            dict: {
-              enabled: {
-                type: "boolean",
-                description: "\u5F00\u542F Webhook \u63A8\u9001",
-                meta: { volatile: true }
-              },
-              provider: {
-                type: "string",
-                description: "\u6E20\u9053\u7C7B\u578B (feishu | dingtalk | wecom | bark | telegram | discord | generic)",
-                meta: { volatile: true }
-              },
-              url: {
-                type: "string",
-                description: "Webhook \u673A\u5668\u4EBA\u5730\u5740",
-                meta: { volatile: true }
-              },
-              secret: {
-                type: "string",
-                description: "\u7B7E\u540D\u5BC6\u94A5 / Chat ID (\u53EF\u9009)",
-                meta: { volatile: true }
-              }
-            }
-          }
-        }
-      },
-      "subagent-model-indicator": {
-        type: "object",
-        description: "\u5B50\u667A\u80FD\u4F53\u6A21\u578B\u6307\u793A\u5668\u914D\u7F6E",
-        meta: {},
-        dict: {
-          enabled: {
-            type: "boolean",
-            description: "\u542F\u7528\u5B50\u667A\u80FD\u4F53\u6A21\u578B\u6307\u793A\u5668",
-            meta: { volatile: true }
-          }
-        }
-      }
-    }
+    dict: {}
   }
 };
 function cloneSchemaNode(node) {
@@ -194,6 +81,7 @@ function cloneSchemaNode(node) {
   return copy;
 }
 function attachToJSON(node) {
+  if (!node.meta || typeof node.meta !== "object") node.meta = {};
   for (const child of Object.values(node.dict ?? {})) attachToJSON(child);
   node.toJSON = () => cloneSchemaNode(node);
   return node;
@@ -207,36 +95,31 @@ attachToJSON({
 function registerPluginSchema(pluginKey, schemaOrDict) {
   const pluginsDict = SCHEMA_DICT.plugins?.dict;
   if (!pluginsDict) return;
-  if (schemaOrDict && typeof schemaOrDict === "object") {
-    let nodeToAttach;
-    if ("dict" in schemaOrDict && schemaOrDict.dict) {
-      nodeToAttach = {
+  const source = schemaOrDict;
+  if (source && (typeof source === "object" || typeof source === "function")) {
+    const dict = source.dict ?? (typeof source === "function" ? void 0 : source);
+    if (dict && typeof dict === "object") {
+      const fields = dict;
+      const nodeToAttach = {
         type: "object",
-        description: schemaOrDict.description || `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
-        meta: { ...schemaOrDict.meta || {} },
-        dict: schemaOrDict.dict
+        description: source.description || `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
+        meta: { ...source.meta || {} },
+        // 确保包含 enabled 开关（聚合总线用 `enabled` 控制子插件装载，必须始终可编辑）
+        dict: fields.enabled ? fields : {
+          enabled: {
+            type: "boolean",
+            description: `\u542F\u7528 ${pluginKey} \u63D2\u4EF6`,
+            meta: { volatile: true }
+          },
+          ...fields
+        }
       };
-    } else {
-      nodeToAttach = {
-        type: "object",
-        description: `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
-        meta: {},
-        dict: schemaOrDict
-      };
+      attachToJSON(nodeToAttach);
+      pluginsDict[pluginKey] = nodeToAttach;
+      return;
     }
-    if (nodeToAttach.dict && !nodeToAttach.dict.enabled) {
-      nodeToAttach.dict = {
-        enabled: {
-          type: "boolean",
-          description: `\u542F\u7528 ${pluginKey} \u63D2\u4EF6`,
-          meta: { volatile: true }
-        },
-        ...nodeToAttach.dict
-      };
-    }
-    attachToJSON(nodeToAttach);
-    pluginsDict[pluginKey] = nodeToAttach;
-  } else if (!pluginsDict[pluginKey]) {
+  }
+  if (!pluginsDict[pluginKey]) {
     const defaultNode = {
       type: "object",
       description: `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
@@ -273,7 +156,7 @@ function materializeVolatile(value, node) {
     const result = {};
     for (const [key, item] of Object.entries(source)) {
       const child = node.dict[key];
-      result[key] = child ? materializeVolatile(item, child) : clonePlain(item);
+      result[key] = child ? materializeVolatile(item, child) : materializeUndeclared(item);
     }
     for (const [key, child] of Object.entries(node.dict)) {
       if (!(key in result)) result[key] = materializeVolatile(void 0, child);
@@ -281,6 +164,19 @@ function materializeVolatile(value, node) {
     return result;
   }
   return clonePlain(value);
+}
+function materializeUndeclared(value) {
+  if (Array.isArray(value)) return value.map(materializeUndeclared);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, materializeUndeclared(item)])
+    );
+  }
+  try {
+    return createVolatileRef(value);
+  } catch {
+    return value;
+  }
 }
 function validateConfig(value) {
   const source = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -372,6 +268,41 @@ function getPluginConfig(config, pluginKey) {
 }
 
 // src/api.ts
+var SECRET_FIELD_NAMES = /* @__PURE__ */ new Set(["secret", "token", "password", "apiKey", "api_key"]);
+var SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+function redactSecrets(value) {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value === null || typeof value !== "object") return value;
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (SECRET_FIELD_NAMES.has(key) && typeof item === "string" && item !== "") {
+      result[key] = SECRET_MASK;
+    } else {
+      result[key] = redactSecrets(item);
+    }
+  }
+  return result;
+}
+function restoreSecrets(incoming, existing) {
+  if (Array.isArray(incoming)) {
+    return Array.isArray(existing) ? incoming.map((item, index) => restoreSecrets(item, existing[index])) : incoming;
+  }
+  if (incoming === null || typeof incoming !== "object") return incoming;
+  if (existing === null || typeof existing !== "object") return incoming;
+  const result = {};
+  for (const [key, item] of Object.entries(incoming)) {
+    if (SECRET_FIELD_NAMES.has(key) && item === SECRET_MASK) {
+      if (typeof existing[key] === "string" && existing[key] !== "") {
+        result[key] = existing[key];
+        continue;
+      }
+      result[key] = "";
+      continue;
+    }
+    result[key] = restoreSecrets(item, existing[key]);
+  }
+  return result;
+}
 function readMergedConfig(projectRoot) {
   let base = {};
   let local = {};
@@ -394,7 +325,11 @@ function readMergedConfig(projectRoot) {
     }
   }
   const merged = deepMerge(base, local);
-  return { base, local, merged };
+  return {
+    base: redactSecrets(base),
+    local: redactSecrets(local),
+    merged: redactSecrets(merged)
+  };
 }
 function writeConfigFile(projectRoot, target, partialConfig) {
   const filename = target === "base" ? BASE_CONFIG_FILENAME : LOCAL_CONFIG_FILENAME;
@@ -408,70 +343,11 @@ function writeConfigFile(projectRoot, target, partialConfig) {
       existing = {};
     }
   }
-  const next = deepMerge(existing, partialConfig);
+  const next = deepMerge(existing, restoreSecrets(partialConfig, existing));
   const serialized = JSON.stringify(next, null, 2) + "\n";
   const tmpPath = path2.join(projectRoot, `.${filename}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   fs2.writeFileSync(tmpPath, serialized, "utf8");
   fs2.renameSync(tmpPath, filePath);
-}
-async function handleApiRequest(req, res, ctx) {
-  const url = new URL(req.url || "/", "http://127.0.0.1");
-  const pathname = url.pathname;
-  if (pathname === "/api/local-plugins/config" && req.method === "GET") {
-    try {
-      const configData = readMergedConfig(ctx.projectRoot);
-      res.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store"
-      });
-      res.end(JSON.stringify(configData));
-    } catch (err) {
-      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
-    }
-    return true;
-  }
-  if (pathname === "/api/local-plugins/config" && req.method === "POST") {
-    try {
-      const chunks = [];
-      for await (const chunk of req) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      const raw = Buffer.concat(chunks).toString("utf8");
-      const body = JSON.parse(raw || "{}");
-      const target = body.target === "base" ? "base" : "local";
-      const config = body.config || {};
-      writeConfigFile(ctx.projectRoot, target, config);
-      ctx.onConfigSaved?.();
-      res.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store"
-      });
-      res.end(JSON.stringify({ ok: true, target }));
-    } catch (err) {
-      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
-    }
-    return true;
-  }
-  if (pathname === "/api/local-plugins/test-notify" && req.method === "POST") {
-    try {
-      let result = { ok: true, message: "\u901A\u77E5\u6D4B\u8BD5\u5DF2\u53D1\u9001" };
-      if (typeof ctx.triggerTestNotify === "function") {
-        result = await ctx.triggerTestNotify();
-      }
-      res.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store"
-      });
-      res.end(JSON.stringify(result));
-    } catch (err) {
-      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
-    }
-    return true;
-  }
-  return false;
 }
 async function handleFetchRequest(request, ctx) {
   const url = new URL(request.url);
@@ -814,31 +690,6 @@ async function apply(ctx, config) {
         queueReload("file");
       }
     };
-    const nodeHttpHandler = async (req, res) => {
-      const handled = await handleApiRequest(req, res, apiHandlerContext);
-      if (!handled && !res.writableEnded) {
-        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-        res.end("Not Found");
-      }
-    };
-    const registerWebServerRoutes = (webCtx) => {
-      try {
-        if (typeof webCtx?.webServer?.register === "function") {
-          webCtx.effect?.(() => {
-            const unregisterExact = webCtx.webServer.register({
-              kind: "prefix",
-              path: "/api/local-plugins",
-              handler: nodeHttpHandler
-            });
-            return () => {
-              unregisterExact?.();
-            };
-          });
-        }
-      } catch (err) {
-        logger.warn("\u6CE8\u518C Web API \u8DEF\u7531\u5931\u8D25:", err);
-      }
-    };
     const registerConnectionRoutes = (connCtx) => {
       try {
         const fetchRegistry = connCtx?.connection?.fetch;
@@ -867,12 +718,8 @@ async function apply(ctx, config) {
       }
     };
     if (typeof ctx?.inject === "function") {
-      ctx.inject(["webServer"], registerWebServerRoutes);
       ctx.inject(["connection"], registerConnectionRoutes);
     } else {
-      if (typeof ctx?.webServer?.register === "function") {
-        registerWebServerRoutes(ctx);
-      }
       if (typeof ctx?.connection?.fetch?.register === "function") {
         registerConnectionRoutes(ctx);
       }
