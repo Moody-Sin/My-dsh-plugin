@@ -191,8 +191,16 @@ function escapeXml(text) {
 // src/utils/wsl.ts
 import fs from "node:fs";
 var WSL_POWERSHELL_PATH = "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe";
-function isWslWithPowershell(platform = process.platform, checkPathExists = (p) => fs.existsSync(p)) {
-  return platform === "linux" && checkPathExists(WSL_POWERSHELL_PATH);
+var cachedResult;
+function defaultCheck(p) {
+  return fs.existsSync(p);
+}
+function isWslWithPowershell(platform = process.platform, checkPathExists = defaultCheck) {
+  const isProductionCall = platform === process.platform && checkPathExists === defaultCheck;
+  if (isProductionCall && cachedResult !== void 0) return cachedResult;
+  const result = platform === "linux" && checkPathExists(WSL_POWERSHELL_PATH);
+  if (isProductionCall) cachedResult = result;
+  return result;
 }
 
 // src/channels/desktop.ts
@@ -662,8 +670,7 @@ ${macMessage}` : macMessage;
     if (!this.config.events.onTurnEnd) {
       return;
     }
-    const minSec = this.config.events.minDurationSeconds ?? this.config.desktop.minDurationSeconds ?? 5;
-    const minMs = minSec * 1e3;
+    const minMs = (this.config.events.minDurationSeconds ?? 5) * 1e3;
     if (info.durationMs < minMs) {
       return;
     }
@@ -729,29 +736,13 @@ ${macMessage}` : macMessage;
 
 // src/index.ts
 var name = "notifier";
-var inject = ["sessions"];
+var inject = [];
 var MAX_TRACKED_TURNS = 200;
+var TURN_TIME_TTL_MS = 24 * 60 * 60 * 1e3;
+var turnStartTimes = /* @__PURE__ */ new Map();
 function apply(ctx, rawConfig, options) {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
-  const turnStartTimes = /* @__PURE__ */ new Map();
-  const cleanup = () => {
-    turnStartTimes.clear();
-  };
-  try {
-    if (typeof ctx?.effect === "function") {
-      ctx.effect(() => cleanup);
-    } else if (typeof ctx?.on === "function") {
-      ctx.on("dispose", cleanup);
-    }
-  } catch {
-    try {
-      if (typeof ctx?.on === "function") {
-        ctx.on("dispose", cleanup);
-      }
-    } catch {
-    }
-  }
   function getSessionTitle(session) {
     if (!session) return void 0;
     let service;
@@ -791,11 +782,15 @@ function apply(ctx, rawConfig, options) {
     if (event.type === "turn/start") {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || "default"}:${turn}`;
+      const now = Date.now();
+      for (const [existingKey, startedAt] of turnStartTimes) {
+        if (now - startedAt > TURN_TIME_TTL_MS) turnStartTimes.delete(existingKey);
+      }
       if (turnStartTimes.size >= MAX_TRACKED_TURNS) {
         const oldestKey = turnStartTimes.keys().next().value;
         if (oldestKey) turnStartTimes.delete(oldestKey);
       }
-      turnStartTimes.set(key, Date.now());
+      turnStartTimes.set(key, now);
     } else if (event.type === "turn/end") {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || "default"}:${turn}`;

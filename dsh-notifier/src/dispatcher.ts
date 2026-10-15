@@ -182,12 +182,10 @@ export class NotificationDispatcher {
       return;
     }
 
-    // 事件级过滤阈值：优先 events.minDurationSeconds，其次回退旧版 desktop 配置，最后兜底 5 秒。
-    // 与 desktop.enabled 完全解耦，避免关闭桌面通知后 Webhook 仍被 desktop 配置过滤。
-    // 注意：正常路径下 resolveConfig 已保证 events.minDurationSeconds 一定存在（缺失时会用 desktop 值或 5 回填），
-    // 因此后两层 ?? 回退在生产路径上不可达；此处保留仅为兼容绕过 resolveConfig、直接构造 config 对象的调用方。
-    const minSec = this.config.events.minDurationSeconds ?? this.config.desktop.minDurationSeconds ?? 5;
-    const minMs = minSec * 1000;
+    // 事件级过滤阈值，与 `desktop.enabled` 完全解耦（关闭桌面通知不应影响 Webhook 过滤）。
+    // `resolveConfig()` 保证该字段存在，但 `NotificationDispatcher` 是公开类、可被直接
+    // 构造，因此保留一个 5 秒的最小兜底，避免残缺配置把阈值变成 NaN 而放行全部通知。
+    const minMs = (this.config.events.minDurationSeconds ?? 5) * 1000;
     if (info.durationMs < minMs) {
       // Suppress short turn notifications to prevent spam
       return;

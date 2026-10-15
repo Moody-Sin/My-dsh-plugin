@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply, name, inject, Config } from '../src/index.ts';
 
+import { resolveConfig } from '../src/config.ts';
+import { NotificationDispatcher } from '../src/dispatcher.ts';
+
 // Mock Cordis Context
 function createMockContext() {
   const listeners: Record<string, Function[]> = {};
@@ -110,12 +113,6 @@ const DEFAULT_TEST_CONFIG = {};
 test('plugin: attaches listeners and processes turn/start -> turn/end cycle', async () => {
   const ctx = createMockContext();
   let dispatchedTurnEnd = false;
-  let effectCleanupRan = false;
-
-  (ctx as any).effect = (cb: () => void | (() => void)) => {
-    const cleaner = cb();
-    if (typeof cleaner === 'function') effectCleanupRan = true;
-  };
 
   const mockDispatcher = {
     onTurnEnd: async () => { dispatchedTurnEnd = true; },
@@ -126,7 +123,10 @@ test('plugin: attaches listeners and processes turn/start -> turn/end cycle', as
 
   apply(ctx as any, DEFAULT_TEST_CONFIG, { dispatcher: mockDispatcher as any });
 
-  assert.ok(effectCleanupRan, 'Cordis v4 ctx.effect 清理回调必须注册');
+  // 轮次计时表已提升为**模块级**，因此 apply() 不再需要 effect 清理回调：
+  // 热重载走 Cordis restart()，清空计时表会让「start 在重载前、end 在重载后」的轮次
+  // 耗时归零并被 minDurationSeconds 过滤掉，该轮结束通知随之丢失。
+  // 监听器由 Cordis 随 fiber 自动注销，计时表靠容量淘汰 + TTL 回收，二者都不需要手动清理。
   assert.ok(ctx.listeners['session/event']?.length, 'session/event must be registered');
 
   const session = { id: 'sess-123' };
@@ -206,9 +206,9 @@ test('plugin: waterfall approval/request delegates to next() and triggers dispat
 });
 
 test('plugin: inject omits sessionTitle to avoid PENDING fiber, yet title still resolves via ctx.get', () => {
-  assert.ok(inject.includes('sessions'), 'inject 需保留 sessions 以兼容旧配置/旧 DSH 版本');
+  assert.deepEqual([...inject], [], 'inject 必须为空：插件从不使用会话存储，声明硬依赖会让服务缺失时 fiber 永久 PENDING');
   assert.ok(
-    !inject.includes('sessionTitle'),
+    ![...inject].includes('sessionTitle'),
     'sessionTitle 是可选增强，写进 inject 会让服务缺失时 fiber 永久挂起、通知全废'
   );
 
@@ -314,5 +314,57 @@ test('plugin: 新增 locale 与 Webhook 渠道配置可通过入口 Schema 解�
   assert.equal(parsed.locale, 'en');
   assert.equal(parsed.webhook.provider, 'telegram');
   assert.equal(parsed.webhook.secret, '42');
+});
+
+
+test('plugin: 热重载（restart）后仍能为「start 在重载前」的轮次算出真实耗时', async () => {
+  // 聚合总线热重载子插件时走 Cordis restart()，即 dispose 再 apply。
+  // 若轮次计时表声明在 apply() 内，重载会把它清空，于是
+  // 「turn/start 在重载前、turn/end 在重载后」的轮次取不到 startTime，
+  // 耗时被保守记为 0 → 被 minDurationSeconds 过滤 → **该轮结束通知静默丢失**。
+  // 计时表提升到模块级后，跨重载的轮次必须仍能算出真实耗时。
+  const durations: number[] = [];
+  const mockDispatcher = {
+    onTurnEnd: async (info: any) => { durations.push(info.durationMs); },
+    onUserQuestion: async () => {},
+    onApproval: async () => {},
+    onError: async () => {},
+  };
+
+  const firstCtx = createMockContext();
+  apply(firstCtx as any, { events: { onTurnEnd: true, minDurationSeconds: 5 } }, {
+    dispatcher: mockDispatcher as any,
+  });
+
+  const session = { id: 'sess-restart' };
+  const realNow = Date.now;
+  try {
+    // 1) 重载前记录 turn/start
+    firstCtx.emit('session/event', session, { type: 'turn/start', data: { turn: 1 } });
+
+    // 2) 模拟热重载：旧实例销毁 + 新实例 apply（计时表不得被清空）
+    const secondCtx = createMockContext();
+    apply(secondCtx as any, { events: { onTurnEnd: true, minDurationSeconds: 5 } }, {
+      dispatcher: mockDispatcher as any,
+    });
+
+    // 3) 重载后收到 turn/end，人为推进时钟 20 秒，远超 5 秒阈值
+    let offset = 0;
+    Date.now = () => realNow() + offset;
+    offset = 20_000;
+    secondCtx.emit('session/event', session, {
+      type: 'turn/end',
+      data: { turn: 1, reason: { kind: 'completed' } },
+    });
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.equal(durations.length, 1, '必须派发一次 turn/end 通知');
+  assert.ok(
+    durations[0] >= 20_000,
+    `跨重载的轮次必须算出真实耗时（期望 >= 20000ms，实际 ${durations[0]}ms），` +
+      '否则会被 minDurationSeconds 过滤导致通知丢失',
+  );
 });
 

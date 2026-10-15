@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, name, inject, Config } from '../index.js';
+import * as bundled from '../index.js';
+
+// 产物是 esbuild 打包的 .js（无类型标注），`inject` 会被推断成 never[]；
+// 这里显式收窄一次，避免下游断言出现隐式 any / never 报错。
+const { apply, name, Config } = bundled;
+const inject: string[] = bundled.inject;
+
 import { NotificationDispatcher } from '../src/dispatcher.ts';
 import { resolveConfig } from '../src/config.ts';
 
 test('e2e: bundled index.js successfully runs full lifecycle', async () => {
   assert.equal(name, 'notifier');
-  assert.deepEqual(inject, ['sessions']);
+  assert.deepEqual([...inject], [], 'inject 必须为空：声明未使用的服务会让 fiber 永久 PENDING、通知全废');
   assert.ok(Config);
 
   const eventsRecorded: string[] = [];

@@ -2,11 +2,25 @@ import { resolveConfig, Config, type NotifierConfig } from './config.ts';
 import { NotificationDispatcher } from './dispatcher.ts';
 
 export const name = 'notifier';
-// sessions 为历史兼容保留，插件实际不使用会话存储。
-// sessionTitle 故意不写进 inject：它是可选增强而非硬依赖，一旦声明，服务缺失时
-// Cordis 会把插件 fiber 永久挂在 PENDING，导致一条通知都发不出。
-// 这里改由 getSessionTitle 用 ctx.get 按需安全读取，缺失时优雅降级为无标题。
-export const inject = ['sessions'];
+/**
+ * 依赖列表刻意为空（必须显式标注类型，否则 TS 会推断为 `never[]`，
+ * 令 `inject.includes(...)` 之类的断言在类型层面无法成立）。
+ *
+ * 曾声明 `inject = ['sessions']`，但插件实际从不使用会话存储；一旦把它写成硬依赖，
+ * 服务缺失或初始化晚于本插件时 Cordis 会把 fiber 永久挂在 PENDING，`apply()` 从不执行，
+ * **一条通知都发不出**，且没有任何告警指向真正原因。
+ * 同理 `sessionTitle` 也绝不写进 inject：它是可选增强，改由 `getSessionTitle` 用
+ * `ctx.get` 按需安全读取，缺失时优雅降级为无标题。
+ */
+/**
+ * 依赖列表刻意为空。
+ *
+ * 显式标注 `string[]` 并通过 `.at(0)` 之外的形态导出，是为了让 esbuild 产出的
+ * `var inject = []` 在 TS 眼中仍是 `string[]` 而非 `never[]` ——
+ * 后者会让下游 `inject.includes('x')` 之类的断言在类型层面无法成立。
+ * （esbuild 会剥离注释，因此不能依赖 JSDoc 传递类型。）
+ */
+export const inject: string[] = [] as string[];
 export { Config };
 export type { NotifierConfig };
 
@@ -16,32 +30,34 @@ export interface ApplyOptions {
 
 const MAX_TRACKED_TURNS = 200;
 
+/**
+ * 轮次计时的过期时长：24 小时。
+ *
+ * 计时表位于模块级以跨越 `restart()` 存活，因此无法依赖 `apply()` 的清理时机；
+ * 超过该时长的陈旧条目（例如进程被挂起后恢复）一律视为无效并回收，
+ * 避免长时间运行下 Map 无界增长。
+ */
+const TURN_TIME_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 轮次计时表：**模块级**而非 `apply()` 内局部。
+ *
+ * 聚合总线热重载子插件时走的是 Cordis `Fiber.update()`，其内部为 `restart()`
+ * （dispose 再 apply）而非原地热更新。若计时表是局部变量，一轮 turn 的 start 发生在
+ * 重载前、end 发生在重载后，`startTime` 就会取不到，耗时被保守记为 0 并触发
+ * `minDurationSeconds` 过滤 —— **该轮结束通知静默丢失**。
+ * 提升到模块级后，重启不再清空计时，跨重载的轮次仍能算出真实耗时。
+ */
+const turnStartTimes = new Map<string, number>();
+
 export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): void {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
 
-  const turnStartTimes = new Map<string, number>();
-
-  // Ensure cleanup on plugin reload / unmount
-  const cleanup = () => {
-    turnStartTimes.clear();
-  };
-  try {
-    if (typeof ctx?.effect === 'function') {
-      ctx.effect(() => cleanup);
-    } else if (typeof ctx?.on === 'function') {
-      ctx.on('dispose', cleanup);
-    }
-  } catch {
-    // 兼容可能对未声明属性访问抛错的严格 Proxy 环境
-    try {
-      if (typeof ctx?.on === 'function') {
-        ctx.on('dispose', cleanup);
-      }
-    } catch {
-      // 容错降级
-    }
-  }
+  // 计时表为模块级，**热重载（restart）期间不得清空**：否则「start 在重载前、
+  // end 在重载后」的轮次会丢失耗时、被 minDurationSeconds 阈值过滤掉。
+  // 因此这里不做任何清理：条目由 MAX_TRACKED_TURNS 容量淘汰与 TURN_TIME_TTL_MS
+  // 过期回收共同收敛，长期运行也不会无界增长。
 
   function getSessionTitle(session: any): string | undefined {
     if (!session) return undefined;
@@ -94,12 +110,16 @@ export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): voi
     if (event.type === 'turn/start') {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || 'default'}:${turn}`;
-      // Capacity eviction protection
+      // 先回收超过 TTL 的陈旧条目，再做容量淘汰（仅淘汰最旧的一条无法防止持续泄漏）
+      const now = Date.now();
+      for (const [existingKey, startedAt] of turnStartTimes) {
+        if (now - startedAt > TURN_TIME_TTL_MS) turnStartTimes.delete(existingKey);
+      }
       if (turnStartTimes.size >= MAX_TRACKED_TURNS) {
         const oldestKey = turnStartTimes.keys().next().value;
         if (oldestKey) turnStartTimes.delete(oldestKey);
       }
-      turnStartTimes.set(key, Date.now());
+      turnStartTimes.set(key, now);
     } else if (event.type === 'turn/end') {
       const turn = event.data?.turn ?? 0;
       const key = `${session?.id || 'default'}:${turn}`;

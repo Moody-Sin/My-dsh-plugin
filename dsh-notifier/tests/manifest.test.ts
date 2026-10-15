@@ -76,8 +76,13 @@ test('manifest: 插件版本与 CHANGELOG 保持同步', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
   const changelog = fs.readFileSync(path.join(pkgDir, 'CHANGELOG.md'), 'utf-8');
 
-  assert.equal(pkg.version, '0.5.0');
-  assert.ok(changelog.includes(`## [${pkg.version}]`), 'CHANGELOG 必须包含当前版本条目');
+  // 只校验「版本号在 CHANGELOG 中有对应条目」这一契约，刻意不硬编码具体版本 ——
+  // 硬编码会让每次发版都必须改测试，把有意义的同步性检查变成噪音。
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, 'package.json 必须声明合法的语义化版本');
+  assert.ok(
+    changelog.includes(`## [${pkg.version}]`),
+    `CHANGELOG 必须包含当前版本 ${pkg.version} 的条目`,
+  );
 });
 
 

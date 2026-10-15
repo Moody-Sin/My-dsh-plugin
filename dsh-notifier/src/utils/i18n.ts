@@ -4,7 +4,7 @@ export type LocaleSetting = 'auto' | 'zh' | 'en';
 /** 实际生效的语言（不含 auto）。 */
 export type ResolvedLocale = 'zh' | 'en';
 
-/** 通知文案键：标题、字段标签与未知值占位。 */
+/** 通知文案键：标题、字段标签、诊断文案与未知值占位。 */
 export type MessageKey =
   | 'taskCompleted'
   | 'taskEnded'
