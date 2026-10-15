@@ -158,3 +158,89 @@ export async function handleApiRequest(
 
   return false;
 }
+
+/**
+ * 将标准 Web Request 适配并转发至 REST API 处理。
+ * 供 `connection.fetch.register` 注册的标准 Fetch API 调用。
+ */
+export async function handleFetchRequest(
+  request: Request,
+  ctx: ApiHandlerContext,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+
+  if (pathname === '/api/local-plugins/config' && request.method === 'GET') {
+    try {
+      const configData = readMergedConfig(ctx.projectRoot);
+      return new Response(JSON.stringify(configData), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        },
+      );
+    }
+  }
+
+  if (pathname === '/api/local-plugins/config' && request.method === 'POST') {
+    try {
+      const body = (await request.json()) as any;
+      const target = body?.target === 'base' ? 'base' : 'local';
+      const config = body?.config || {};
+
+      writeConfigFile(ctx.projectRoot, target, config);
+      ctx.onConfigSaved?.();
+
+      return new Response(JSON.stringify({ ok: true, target }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        },
+      );
+    }
+  }
+
+  if (pathname === '/api/local-plugins/test-notify' && request.method === 'POST') {
+    try {
+      let result: any = { ok: true, message: '通知测试已发送' };
+      if (typeof ctx.triggerTestNotify === 'function') {
+        result = await ctx.triggerTestNotify();
+      }
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        },
+      );
+    }
+  }
+
+  return new Response('Not Found', { status: 404 });
+}

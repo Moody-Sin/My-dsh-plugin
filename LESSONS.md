@@ -38,5 +38,9 @@
 - **子智能体模型感知机制**：DSH 会话投影中记录了 `modelSelection`（含 `lastUsed` 与 `next`），但原生 `ui-model-selection` 限制子智能体不挂载输入栏模型控件。通过在 `conversation.session.header.actions` 挂载徽标并校验 `session.origin === 'subagent'`，可优雅补齐模型名称与推理层级（Reasoning Effort）的展示，且完全不干扰主会话。
 - **前端 Slot 兜底拦截避免全量 DOM 扫描**：在向 React Fiber Provider 寻找 Slot 服务进行 Monkey-patch 时，应从 `#root` 等高层容器定向遍历并加设深度限制（如 `depth <= 30`），避免在巨型长会话下 `document.querySelectorAll('*')` 递归扫描引发页面主线程卡顿。
 
+## 9. Cordis 依赖注入与 DSH Web 鉴权通道
+- **`export const inject` 语法是服务名数组或对象，不支持 `{ optional: [...] }`**：Cordis 内部通过 `Inject.resolve` 将 inject 结构扁平化。如果写成 `export const inject = { optional: ['webServer'] }`，Cordis 会提取键名，误认为插件依赖一个名为 `optional` 的服务，导致插件永远处于 `INACTIVE` 状态（state: 0）等待该服务，`apply()` 永远无法执行。可选服务应直接在 `apply(ctx)` 中通过 `ctx.inject(['serviceName'], callback)` 声明。
+- **DSH Web 客户端请求必须走 `connection.fetch` 鉴权通道**：DSH Web 的 `/api` 前缀路由受 `client-connection` 服务接管，所有未经其校验的请求直接返回 401 Unauthorized。当浏览器端通过 `fetch('/api/local-plugins/...')` 发起请求时，它携带浏览器会话 Cookie。插件必须通过 `ctx.inject(['connection'], connCtx => connCtx.connection.fetch.register({ path, methods, fetch }))` 注册标准 Web Request 路由，才能通过 `connection.admit()` 鉴权并正确响应。如果仅在 `webServer.register` 注册 `/api/local-plugins`，则会被阻断或发生路由错位。同时保留 `webServer.register` 作为双保险以兼容纯 HTTP 载体。
+
 
 

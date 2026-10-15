@@ -473,6 +473,78 @@ async function handleApiRequest(req, res, ctx) {
   }
   return false;
 }
+async function handleFetchRequest(request, ctx) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  if (pathname === "/api/local-plugins/config" && request.method === "GET") {
+    try {
+      const configData = readMergedConfig(ctx.projectRoot);
+      return new Response(JSON.stringify(configData), {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store"
+        }
+      });
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        }
+      );
+    }
+  }
+  if (pathname === "/api/local-plugins/config" && request.method === "POST") {
+    try {
+      const body = await request.json();
+      const target = body?.target === "base" ? "base" : "local";
+      const config = body?.config || {};
+      writeConfigFile(ctx.projectRoot, target, config);
+      ctx.onConfigSaved?.();
+      return new Response(JSON.stringify({ ok: true, target }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store"
+        }
+      });
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        }
+      );
+    }
+  }
+  if (pathname === "/api/local-plugins/test-notify" && request.method === "POST") {
+    try {
+      let result = { ok: true, message: "\u901A\u77E5\u6D4B\u8BD5\u5DF2\u53D1\u9001" };
+      if (typeof ctx.triggerTestNotify === "function") {
+        result = await ctx.triggerTestNotify();
+      }
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store"
+        }
+      });
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ ok: false, error: err?.message || String(err) }),
+        {
+          status: 500,
+          headers: { "content-type": "application/json; charset=utf-8" }
+        }
+      );
+    }
+  }
+  return new Response("Not Found", { status: 404 });
+}
 
 // src/scanner.ts
 import fs3 from "node:fs";
@@ -546,9 +618,6 @@ function scanPlugins(rootDir) {
 
 // src/index.ts
 var name = "my-dsh-plugins";
-var inject = {
-  optional: ["webServer"]
-};
 var ROOT_PACKAGE_NAME = "@local/my-dsh-plugins";
 var LOG_PREFIX = "[my-dsh-plugins]";
 var CONFIG_WATCH_DEBOUNCE_MS = 300;
@@ -737,15 +806,16 @@ async function apply(ctx, config) {
     logger.warn("\u8BBE\u7F6E\u8868\u5355\u8054\u52A8\u76D1\u542C\u6CE8\u518C\u5931\u8D25\uFF0C\u8868\u5355\u53D8\u66F4\u9700\u91CD\u542F\u540E\u751F\u6548:", error);
   }
   try {
-    const apiHandler = async (req, res) => {
-      const handled = await handleApiRequest(req, res, {
-        projectRoot: rootDir,
-        logger,
-        onConfigSaved: () => {
-          logger.info("\u6536\u5230\u8BBE\u7F6E UI \u914D\u7F6E\u66F4\u65B0\uFF0C\u89E6\u53D1\u70ED\u91CD\u8F7D...");
-          queueReload("file");
-        }
-      });
+    const apiHandlerContext = {
+      projectRoot: rootDir,
+      logger,
+      onConfigSaved: () => {
+        logger.info("\u6536\u5230\u8BBE\u7F6E UI \u914D\u7F6E\u66F4\u65B0\uFF0C\u89E6\u53D1\u70ED\u91CD\u8F7D...");
+        queueReload("file");
+      }
+    };
+    const nodeHttpHandler = async (req, res) => {
+      const handled = await handleApiRequest(req, res, apiHandlerContext);
       if (!handled && !res.writableEnded) {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         res.end("Not Found");
@@ -758,7 +828,7 @@ async function apply(ctx, config) {
             const unregisterExact = webCtx.webServer.register({
               kind: "prefix",
               path: "/api/local-plugins",
-              handler: apiHandler
+              handler: nodeHttpHandler
             });
             return () => {
               unregisterExact?.();
@@ -769,10 +839,43 @@ async function apply(ctx, config) {
         logger.warn("\u6CE8\u518C Web API \u8DEF\u7531\u5931\u8D25:", err);
       }
     };
+    const registerConnectionRoutes = (connCtx) => {
+      try {
+        const fetchRegistry = connCtx?.connection?.fetch;
+        if (typeof fetchRegistry?.register === "function") {
+          connCtx.effect?.(() => {
+            const unregisterConfig = fetchRegistry.register({
+              path: "/api/local-plugins/config",
+              methods: ["GET", "POST"],
+              requestBody: "buffered",
+              fetch: (request) => handleFetchRequest(request, apiHandlerContext)
+            });
+            const unregisterTest = fetchRegistry.register({
+              path: "/api/local-plugins/test-notify",
+              methods: ["POST"],
+              requestBody: "buffered",
+              fetch: (request) => handleFetchRequest(request, apiHandlerContext)
+            });
+            return () => {
+              unregisterConfig?.();
+              unregisterTest?.();
+            };
+          });
+        }
+      } catch (err) {
+        logger.warn("\u6CE8\u518C connection.fetch \u8DEF\u7531\u5931\u8D25:", err);
+      }
+    };
     if (typeof ctx?.inject === "function") {
       ctx.inject(["webServer"], registerWebServerRoutes);
-    } else if (typeof ctx?.webServer?.register === "function") {
-      registerWebServerRoutes(ctx);
+      ctx.inject(["connection"], registerConnectionRoutes);
+    } else {
+      if (typeof ctx?.webServer?.register === "function") {
+        registerWebServerRoutes(ctx);
+      }
+      if (typeof ctx?.connection?.fetch?.register === "function") {
+        registerConnectionRoutes(ctx);
+      }
     }
     const clientBundlePath = fs4.existsSync(path4.join(rootDir, "client.js")) ? path4.join(rootDir, "client.js") : path4.join(path4.dirname(fileURLToPath(import.meta.url)), "client.js");
     const onIndexInject = (table) => {
@@ -842,7 +945,6 @@ async function apply(ctx, config) {
 export {
   Config,
   apply,
-  inject,
   name,
   resolveProjectRoot
 };

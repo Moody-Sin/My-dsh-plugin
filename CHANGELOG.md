@@ -22,6 +22,9 @@
   - 模型名称美化：增加可选 `trimVersionSuffix`，支持对 `-latest` 或类似 `-20241022` 等长版本日期后缀做优雅裁剪。
 
 ### 修复 (Fixed)
+- **设置 UI 配置加载 HTTP 401/404 异常与 Cordis Inject 语法修复**：
+  - 修复 `src/index.ts` 中错误导出 `export const inject = { optional: ['webServer'] }` 的问题。在 Cordis 微内核中，此写法会被 `Inject.resolve` 误解析为依赖名为 `optional` 的服务，导致根插件永远处于 `INACTIVE` 待命状态，`apply()` 从未执行。现移除顶层伪 inject，全量使用内部 `ctx.inject(['webServer'], ...)` 与 `ctx.inject(['connection'], ...)` 进行动态服务就绪注入。
+  - 对接 DSH Web 原生鉴权架构：浏览器发起的 `/api` 请求由 `client-connection` 接管并校验用户会话，原先仅在 `webServer.register` 注册会被鉴权层拦截返回 401/404。现同时通过 `ctx.inject(['connection'], ...)` 在 `connection.fetch.register` 上注册标准 Web Request 处理路由（`GET /api/local-plugins/config`、`POST /api/local-plugins/config` 与 `POST /api/local-plugins/test-notify`），实现与 DSH Web 身份验证机制原生兼容。
 - **客户端 Bundle 浏览器模块规范与顶层加载异常**：修复构建客户端前端 bundle 时因 IIFE 格式与 `--external:react` 在浏览器顶层生成 `__require("react")` 导致脚本加载阶段抛错 `Dynamic require of "react" is not supported` 并触发 `web boot: 1 entry did not activate / import failed` 的缺陷。重构构建流程为 CJS 闭包包装并安全对接 DSH 原生 `window.__ModuleLoader__.load`，从 factory 上下文解析 React，导出标准 `{ inject: ['slots'], apply(ctx) }`，并在根 `package.json` 补充 `"./package.json"` 导出，确保模块能够被 DSH 浏览器模块系统稳定识别和激活。
 - **总线热重载目录动态感知**：修复 `src/index.ts` 中 `scanned` 目录列表在初始化后闭包冻结的问题。每次执行 `reload()` 时重新调用 `scanPlugins(rootDir)`，使新增或物理移除的 `dsh-*` 子插件目录能够被动态识别、挂载与销毁。
 - **根加载器卸载 (Dispose) 级联释放**：在 `apply()` 的清理函数中补充对 `forks` 登记表所有子插件 Fiber 的 `fiber.dispose()` 级联调用与清理，彻底杜绝孤儿 Fiber 内存泄漏与事件重复监听。

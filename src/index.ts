@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { handleApiRequest } from './api.ts';
+import { handleApiRequest, handleFetchRequest } from './api.ts';
 import {
   BASE_CONFIG_FILENAME,
   Config,
@@ -18,16 +18,6 @@ import { scanPlugins, type ScannedPlugin } from './scanner.ts';
 
 /** 聚合插件加载器的插件名，供 Cordis 日志与插件注册表识别 */
 export const name = 'my-dsh-plugins';
-
-/**
- * 声明注入 webServer（可选服务）。
- * 在 Cordis 中，如果未声明 inject: ['webServer'] 或未使用 ctx.inject(['webServer'], ...)，
- * 访问 ctx.webServer 会因 Cordis 服务的延迟就绪或 Proxy 隔离而不可用，
- * 导致 Web REST 路由从未被注册进 webServer！
- */
-export const inject = {
-  optional: ['webServer'],
-};
 
 /** 根插件自身配置 Schema，交由宿主在启动前校验 */
 export { Config };
@@ -393,21 +383,24 @@ export async function apply(ctx: any, config?: any): Promise<void> {
 
   // ── 注册设置 UI 对应的 Web REST API 路由与前端脚本注入 ──────────────
   try {
-    const apiHandler = async (req: any, res: any) => {
-      const handled = await handleApiRequest(req, res, {
-        projectRoot: rootDir,
-        logger,
-        onConfigSaved: () => {
-          logger.info('收到设置 UI 配置更新，触发热重载...');
-          queueReload('file');
-        },
-      });
+    const apiHandlerContext = {
+      projectRoot: rootDir,
+      logger,
+      onConfigSaved: () => {
+        logger.info('收到设置 UI 配置更新，触发热重载...');
+        queueReload('file');
+      },
+    };
+
+    const nodeHttpHandler = async (req: any, res: any) => {
+      const handled = await handleApiRequest(req, res, apiHandlerContext);
       if (!handled && !res.writableEnded) {
         res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         res.end('Not Found');
       }
     };
 
+    // 1. 在 webServer 上注册前缀路由（直接 HTTP 管道）
     const registerWebServerRoutes = (webCtx: any) => {
       try {
         if (typeof webCtx?.webServer?.register === 'function') {
@@ -415,7 +408,7 @@ export async function apply(ctx: any, config?: any): Promise<void> {
             const unregisterExact = webCtx.webServer.register({
               kind: 'prefix',
               path: '/api/local-plugins',
-              handler: apiHandler,
+              handler: nodeHttpHandler,
             });
             return () => {
               unregisterExact?.();
@@ -427,10 +420,45 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       }
     };
 
+    // 2. 在 connection.fetch 上注册精确路由（DSH 浏览器端经由 /api 鉴权通道分发）
+    const registerConnectionRoutes = (connCtx: any) => {
+      try {
+        const fetchRegistry = connCtx?.connection?.fetch;
+        if (typeof fetchRegistry?.register === 'function') {
+          connCtx.effect?.(() => {
+            const unregisterConfig = fetchRegistry.register({
+              path: '/api/local-plugins/config',
+              methods: ['GET', 'POST'],
+              requestBody: 'buffered',
+              fetch: (request: Request) => handleFetchRequest(request, apiHandlerContext),
+            });
+            const unregisterTest = fetchRegistry.register({
+              path: '/api/local-plugins/test-notify',
+              methods: ['POST'],
+              requestBody: 'buffered',
+              fetch: (request: Request) => handleFetchRequest(request, apiHandlerContext),
+            });
+            return () => {
+              unregisterConfig?.();
+              unregisterTest?.();
+            };
+          });
+        }
+      } catch (err) {
+        logger.warn('注册 connection.fetch 路由失败:', err);
+      }
+    };
+
     if (typeof ctx?.inject === 'function') {
       ctx.inject(['webServer'], registerWebServerRoutes);
-    } else if (typeof ctx?.webServer?.register === 'function') {
-      registerWebServerRoutes(ctx);
+      ctx.inject(['connection'], registerConnectionRoutes);
+    } else {
+      if (typeof ctx?.webServer?.register === 'function') {
+        registerWebServerRoutes(ctx);
+      }
+      if (typeof ctx?.connection?.fetch?.register === 'function') {
+        registerConnectionRoutes(ctx);
+      }
     }
 
     // 通过 webserver/index-inject 注入客户端脚本
