@@ -63,7 +63,8 @@ export class NotificationDispatcher {
   private readonly config: NotifierConfig;
   private readonly locale: ResolvedLocale;
   private readonly platform: string;
-  private readonly debounceMs: number;
+  // 非 readonly：`sendRaw()` 需临时关闭防抖以保证连点诊断不被吞掉
+  private debounceMs: number;
   private readonly nowFn: () => number;
   private readonly desktopFn: (title: string, message: string, options?: DesktopOptions) => Promise<boolean>;
   private readonly soundFn: (kind: SoundKind) => Promise<boolean>;
@@ -170,6 +171,55 @@ export class NotificationDispatcher {
     }
 
     await Promise.allSettled(tasks);
+  }
+
+  /**
+   * 只向**某一个**渠道推送一条自定义消息，用于连通性诊断。
+   *
+   * `channel` 是必填的明确单渠道指定，刻意不提供「全部渠道」模式：
+   * 诊断必须让每个渠道**独立触发、独立统计**结果。若一次调用派发多个渠道，
+   * 返回值只能是有没有全成功的聚合布尔值 —— 于是 Webhook 失败会把明明成功弹窗的
+   * 桌面渠道也标记成失败（误报），且各渠道会被重复派发（连发两次 Webhook / 提示音）。
+   *
+   * 诊断场景必须关闭防抖：连点按钮时消息内容完全相同，否则第二次会被静默吞掉。
+   */
+  async sendRaw(
+    title: string,
+    message: string,
+    kind: NotificationKind = 'info',
+    channel: 'desktop' | 'sound' | 'webhook',
+  ): Promise<boolean> {
+    const savedDebounce = this.debounceMs;
+    (this as any).debounceMs = 0;
+
+    let task: Promise<any>;
+    switch (channel) {
+      case 'desktop':
+        // 桌面渠道独立测试时**不带内联声音**：否则会把声音一并触发，
+        // 既与独立的声音测试重复，也让弹窗结果受声音影响。
+        task = this.desktopFn(title, message, {
+          platform: this.platform,
+          kind,
+          soundEnabled: false,
+          soundKind: kind === 'info' ? 'default' : 'alert',
+        });
+        break;
+      case 'sound':
+        task = this.soundFn(kind === 'info' ? 'default' : 'alert');
+        break;
+      case 'webhook':
+        task = this.webhookFn(this.config.webhook, { title, message, event: 'cli/test', kind });
+        break;
+    }
+
+    try {
+      const settled = await Promise.allSettled([task]);
+      (this as any).debounceMs = savedDebounce;
+      return settled.every((result) => result.status === 'fulfilled' && result.value === true);
+    } catch {
+      (this as any).debounceMs = savedDebounce;
+      return false;
+    }
   }
 
   async onTurnEnd(info: {

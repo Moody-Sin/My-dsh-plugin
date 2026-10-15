@@ -11,6 +11,11 @@ export type MessageKey =
   | 'waitingForResponse'
   | 'approvalRequested'
   | 'taskError'
+  | 'testTitle'
+  | 'testMessage'
+  | 'testSucceeded'
+  | 'testPartialFailed'
+  | 'noChannelEnabled'
   | 'session'
   | 'turn'
   | 'duration'
@@ -27,6 +32,11 @@ const DICTIONARIES: Record<ResolvedLocale, Record<MessageKey, string>> = {
     waitingForResponse: 'DeepSeek Harness - 等待您的回答',
     approvalRequested: 'DeepSeek Harness - 请求权限审批',
     taskError: 'DeepSeek Harness - 任务异常',
+    testTitle: 'DeepSeek Harness - 测试通知',
+    testMessage: '这是一条来自 DSH 的测试通知。\n如果你看到了这条消息，说明通知渠道工作正常。',
+    testSucceeded: '通知测试已成功发送',
+    testPartialFailed: '部分渠道发送失败，请检查配置与网络',
+    noChannelEnabled: '未启用任何通知渠道，请先开启桌面弹窗、提示音或 Webhook',
     session: '会话',
     turn: '轮次',
     duration: '耗时',
@@ -42,6 +52,12 @@ const DICTIONARIES: Record<ResolvedLocale, Record<MessageKey, string>> = {
     waitingForResponse: 'DeepSeek Harness - Waiting for Response',
     approvalRequested: 'DeepSeek Harness - Approval Requested',
     taskError: 'DeepSeek Harness - Task Error',
+    testTitle: 'DeepSeek Harness - Test Notification',
+    testMessage:
+      'This is a test notification from DSH.\nIf you see this message, your notification channel is working.',
+    testSucceeded: 'Test notification sent successfully',
+    testPartialFailed: 'Some channels failed; please check your configuration and network',
+    noChannelEnabled: 'No notification channel is enabled; turn on desktop, sound or webhook first',
     session: 'Session',
     turn: 'Turn',
     duration: 'Duration',

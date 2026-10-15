@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, name, inject, Config } from '../src/index.ts';
+import { apply, name, inject, Config, sendTestNotification } from '../src/index.ts';
 
 import { resolveConfig } from '../src/config.ts';
 import { NotificationDispatcher } from '../src/dispatcher.ts';
@@ -365,6 +365,102 @@ test('plugin: 热重载（restart）后仍能为「start 在重载前」的轮�
     durations[0] >= 20_000,
     `跨重载的轮次必须算出真实耗时（期望 >= 20000ms，实际 ${durations[0]}ms），` +
       '否则会被 minDurationSeconds 过滤导致通知丢失',
+  );
+});
+
+test('plugin: sendTestNotification 真实调用已启用渠道，不返回假成功', async () => {
+  const calls: string[] = [];
+  const config = resolveConfig({
+    locale: 'zh',
+    desktop: { enabled: true },
+    sound: { enabled: false },
+    events: { onTurnEnd: true, minDurationSeconds: 0 },
+    webhook: { enabled: false, provider: 'generic', url: '' },
+  });
+
+  const dispatched: any[] = [];
+  const mockDispatcher = {
+    sendRaw: async (title: string, message: string, _kind: string, channel: string) => {
+      calls.push(channel);
+      dispatched.push({ title, message });
+      return true;
+    },
+  };
+
+  // 通过依赖注入验证诊断入口：它必须走真实派发路径，而不是凭空返回 ok
+  const result = await sendTestNotification(config, { dispatcher: mockDispatcher as any });
+
+  assert.deepEqual(calls, ['desktop'], '桌面已启用而声音/Webhook 关闭，只应触发桌面渠道一次');
+  assert.equal(result.ok, true);
+  assert.ok(result.desktop, '桌面渠道已启用，应报告成功');
+  assert.ok(result.message, '必须回传可读的诊断结论');
+  assert.ok(
+    dispatched[0]?.title?.includes('测试通知'),
+    '诊断消息文案必须来自词典，避免中英文环境错乱',
+  );
+});
+
+test('plugin: sendTestNotification 各渠道独立统计，Webhook 失败不得误报桌面失败', async () => {
+  // 回归：曾用「一次 sendRaw 派发多个渠道 + 聚合布尔返回值」，导致
+  //  1) Webhook 被连发两次（第一步无选项时已发过，第三步又显式发一次）；
+  //  2) Webhook 失败时把明明成功弹窗的桌面渠道也标记为 false（误报）。
+  // 现在每个渠道独立调用、独立统计，用**真实 dispatcher** 验证调用次数与归属。
+  const hits = { desktop: 0, sound: 0, webhook: 0 };
+
+  const config = resolveConfig({
+    locale: 'zh',
+    desktop: { enabled: true },
+    sound: { enabled: true },
+    events: { onTurnEnd: true, minDurationSeconds: 0 },
+    webhook: { enabled: true, provider: 'generic', url: 'https://bad.example/hook' },
+  });
+
+  // 用真实 NotificationDispatcher，仅替换三个渠道实现以观测真实派发行为
+  const dispatcher = new NotificationDispatcher(config, {
+    platform: 'linux',
+    debounceMs: 0,
+    desktopFn: async () => { hits.desktop++; return true; },
+    soundFn: async () => { hits.sound++; return true; },
+    // Webhook 刻意失败：不应影响其它渠道的统计结果
+    webhookFn: async () => { hits.webhook++; return false; },
+  });
+
+  const result = await sendTestNotification(config, { dispatcher });
+
+  assert.equal(hits.desktop, 1, '桌面渠道必须且只能被触发 1 次');
+  assert.equal(hits.sound, 1, '提示音渠道必须且只能被触发 1 次（不得被桌面测试连带触发）');
+  assert.equal(hits.webhook, 1, 'Webhook 必须且只能被触发 1 次（修复前会连发 2 次）');
+
+  assert.equal(result.desktop, true, '桌面弹窗成功，绝不能因 Webhook 失败而被误报为失败');
+  assert.equal(result.sound, true, '提示音成功，同样不受 Webhook 影响');
+  assert.equal(result.webhook, false, 'Webhook 确实失败，应如实报告');
+  assert.equal(result.ok, false, '存在失败渠道时整体不得报告成功');
+});
+
+test('plugin: 桌面渠道独立诊断时不内联提示音（避免与声音测试重复）', async () => {
+  const optionsSeen: any[] = [];
+  const config = resolveConfig({
+    locale: 'zh',
+    desktop: { enabled: true },
+    sound: { enabled: false },
+    events: { onTurnEnd: true, minDurationSeconds: 0 },
+  });
+
+  // 即便在 Windows 上（历史上会把声音内联进 Toast），独立诊断也不得带声音
+  const dispatcher = new NotificationDispatcher(config, {
+    platform: 'win32',
+    debounceMs: 0,
+    desktopFn: async (_t, _m, options) => { optionsSeen.push(options); return true; },
+    soundFn: async () => true,
+  });
+
+  await sendTestNotification(config, { dispatcher });
+
+  assert.equal(optionsSeen.length, 1);
+  assert.equal(
+    optionsSeen[0]?.soundEnabled,
+    false,
+    '桌面渠道的独立诊断必须关闭内联声音，否则会与声音渠道的测试重复发声',
   );
 });
 

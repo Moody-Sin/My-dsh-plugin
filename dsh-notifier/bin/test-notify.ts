@@ -3,10 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveConfig, type NotifierConfig, type WebhookProvider } from '../src/config.ts';
+import { resolveConfig, type WebhookProvider } from '../src/config.ts';
+import { interpolateEnvVariables } from '../src/utils/env.ts';
 import { sendDesktopNotification } from '../src/channels/desktop.ts';
 import { playNotificationSound } from '../src/channels/sound.ts';
 import { sendWebhookNotification } from '../src/channels/webhook.ts';
+
+// 保持对外可导入：已有测试与外部脚本从本 CLI 模块取该函数
+export { interpolateEnvVariables };
 
 /**
  * 递归向上查找仓库根目录中的配置文件。
@@ -22,21 +26,6 @@ function findConfigFile(filename: string): string | undefined {
     dir = parent;
   }
   return undefined;
-}
-
-const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([a-zA-Z_][a-zA-Z0-9_]*)(?::-([^}]*))?\}/g;
-
-export function interpolateEnvVariables(raw: string): string {
-  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string, defaultValue?: string) => {
-    const value = process.env[varName];
-    if (value !== undefined) {
-      return JSON.stringify(value).slice(1, -1);
-    }
-    if (defaultValue !== undefined) {
-      return JSON.stringify(defaultValue).slice(1, -1);
-    }
-    return placeholder;
-  });
 }
 
 function loadJsonFile(filepath?: string): Record<string, any> {

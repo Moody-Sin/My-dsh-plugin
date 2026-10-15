@@ -514,6 +514,11 @@ var DICTIONARIES = {
     waitingForResponse: "DeepSeek Harness - \u7B49\u5F85\u60A8\u7684\u56DE\u7B54",
     approvalRequested: "DeepSeek Harness - \u8BF7\u6C42\u6743\u9650\u5BA1\u6279",
     taskError: "DeepSeek Harness - \u4EFB\u52A1\u5F02\u5E38",
+    testTitle: "DeepSeek Harness - \u6D4B\u8BD5\u901A\u77E5",
+    testMessage: "\u8FD9\u662F\u4E00\u6761\u6765\u81EA DSH \u7684\u6D4B\u8BD5\u901A\u77E5\u3002\n\u5982\u679C\u4F60\u770B\u5230\u4E86\u8FD9\u6761\u6D88\u606F\uFF0C\u8BF4\u660E\u901A\u77E5\u6E20\u9053\u5DE5\u4F5C\u6B63\u5E38\u3002",
+    testSucceeded: "\u901A\u77E5\u6D4B\u8BD5\u5DF2\u6210\u529F\u53D1\u9001",
+    testPartialFailed: "\u90E8\u5206\u6E20\u9053\u53D1\u9001\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u914D\u7F6E\u4E0E\u7F51\u7EDC",
+    noChannelEnabled: "\u672A\u542F\u7528\u4EFB\u4F55\u901A\u77E5\u6E20\u9053\uFF0C\u8BF7\u5148\u5F00\u542F\u684C\u9762\u5F39\u7A97\u3001\u63D0\u793A\u97F3\u6216 Webhook",
     session: "\u4F1A\u8BDD",
     turn: "\u8F6E\u6B21",
     duration: "\u8017\u65F6",
@@ -529,6 +534,11 @@ var DICTIONARIES = {
     waitingForResponse: "DeepSeek Harness - Waiting for Response",
     approvalRequested: "DeepSeek Harness - Approval Requested",
     taskError: "DeepSeek Harness - Task Error",
+    testTitle: "DeepSeek Harness - Test Notification",
+    testMessage: "This is a test notification from DSH.\nIf you see this message, your notification channel is working.",
+    testSucceeded: "Test notification sent successfully",
+    testPartialFailed: "Some channels failed; please check your configuration and network",
+    noChannelEnabled: "No notification channel is enabled; turn on desktop, sound or webhook first",
     session: "Session",
     turn: "Turn",
     duration: "Duration",
@@ -581,6 +591,7 @@ var NotificationDispatcher = class {
   config;
   locale;
   platform;
+  // 非 readonly：`sendRaw()` 需临时关闭防抖以保证连点诊断不被吞掉
   debounceMs;
   nowFn;
   desktopFn;
@@ -666,6 +677,45 @@ ${macMessage}` : macMessage;
     }
     await Promise.allSettled(tasks);
   }
+  /**
+   * 只向**某一个**渠道推送一条自定义消息，用于连通性诊断。
+   *
+   * `channel` 是必填的明确单渠道指定，刻意不提供「全部渠道」模式：
+   * 诊断必须让每个渠道**独立触发、独立统计**结果。若一次调用派发多个渠道，
+   * 返回值只能是有没有全成功的聚合布尔值 —— 于是 Webhook 失败会把明明成功弹窗的
+   * 桌面渠道也标记成失败（误报），且各渠道会被重复派发（连发两次 Webhook / 提示音）。
+   *
+   * 诊断场景必须关闭防抖：连点按钮时消息内容完全相同，否则第二次会被静默吞掉。
+   */
+  async sendRaw(title, message, kind = "info", channel) {
+    const savedDebounce = this.debounceMs;
+    this.debounceMs = 0;
+    let task;
+    switch (channel) {
+      case "desktop":
+        task = this.desktopFn(title, message, {
+          platform: this.platform,
+          kind,
+          soundEnabled: false,
+          soundKind: kind === "info" ? "default" : "alert"
+        });
+        break;
+      case "sound":
+        task = this.soundFn(kind === "info" ? "default" : "alert");
+        break;
+      case "webhook":
+        task = this.webhookFn(this.config.webhook, { title, message, event: "cli/test", kind });
+        break;
+    }
+    try {
+      const settled = await Promise.allSettled([task]);
+      this.debounceMs = savedDebounce;
+      return settled.every((result) => result.status === "fulfilled" && result.value === true);
+    } catch {
+      this.debounceMs = savedDebounce;
+      return false;
+    }
+  }
   async onTurnEnd(info) {
     if (!this.config.events.onTurnEnd) {
       return;
@@ -740,6 +790,30 @@ var inject = [];
 var MAX_TRACKED_TURNS = 200;
 var TURN_TIME_TTL_MS = 24 * 60 * 60 * 1e3;
 var turnStartTimes = /* @__PURE__ */ new Map();
+async function sendTestNotification(rawConfig, options) {
+  const config = resolveConfig(rawConfig);
+  const locale = resolveLocale(config.locale);
+  const title = t(locale, "testTitle");
+  const message = t(locale, "testMessage");
+  const dispatcher = options?.dispatcher ?? new NotificationDispatcher(config);
+  const channels = {};
+  if (config.desktop.enabled) {
+    channels.desktop = await dispatcher.sendRaw(title, message, "info", "desktop");
+  }
+  if (config.sound.enabled) {
+    channels.sound = await dispatcher.sendRaw(title, message, "info", "sound");
+  }
+  if (config.webhook.enabled && config.webhook.url) {
+    channels.webhook = await dispatcher.sendRaw(title, message, "info", "webhook");
+  }
+  const results = Object.values(channels);
+  const ok = results.length > 0 && results.every(Boolean);
+  return {
+    ok,
+    ...channels,
+    message: results.length === 0 ? t(locale, "noChannelEnabled") : ok ? t(locale, "testSucceeded") : t(locale, "testPartialFailed")
+  };
+}
 function apply(ctx, rawConfig, options) {
   const config = resolveConfig(rawConfig);
   const dispatcher = options?.dispatcher || new NotificationDispatcher(config);
@@ -849,5 +923,6 @@ export {
   Config,
   apply,
   inject,
-  name
+  name,
+  sendTestNotification
 };

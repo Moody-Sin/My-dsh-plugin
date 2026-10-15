@@ -1,5 +1,6 @@
 import { resolveConfig, Config, type NotifierConfig } from './config.ts';
 import { NotificationDispatcher } from './dispatcher.ts';
+import { t, resolveLocale } from './utils/i18n.ts';
 
 export const name = 'notifier';
 /**
@@ -49,6 +50,61 @@ const TURN_TIME_TTL_MS = 24 * 60 * 60 * 1000;
  * 提升到模块级后，重启不再清空计时，跨重载的轮次仍能算出真实耗时。
  */
 const turnStartTimes = new Map<string, number>();
+
+/**
+ * 执行一次连通性诊断：向全部已启用的渠道推送一条测试通知。
+ *
+ * 供聚合总线的设置 UI 「⚡ 发送测试通知」按钮调用 —— 未接线时该按钮会返回
+ * 假成功（`{ ok: true }` 却一条通知都没发），导致用户误判渠道已连通。
+ *
+ * @returns 各渠道的发送结果，供 UI 逐条展示
+ */
+export async function sendTestNotification(
+  rawConfig?: unknown,
+  options?: { dispatcher?: NotificationDispatcher },
+): Promise<{
+  ok: boolean;
+  desktop?: boolean;
+  sound?: boolean;
+  webhook?: boolean;
+  message: string;
+}> {
+  const config = resolveConfig(rawConfig);
+  const locale = resolveLocale(config.locale);
+  const title = t(locale, 'testTitle');
+  const message = t(locale, 'testMessage');
+
+  // 复用与真实事件完全相同的派发路径，确保诊断结果与生产行为一致。
+  //
+  // **每个渠道必须独立调用、独立统计**：若一次调用派发多个渠道，返回值只能是
+  // 「是否全部成功」的聚合布尔值，于是 Webhook 失败会把明明成功弹窗的桌面渠道
+  // 也标记成失败（误报），同时各渠道还会被重复派发。
+  const dispatcher = options?.dispatcher ?? new NotificationDispatcher(config);
+  const channels: Record<string, boolean> = {};
+
+  if (config.desktop.enabled) {
+    channels.desktop = await dispatcher.sendRaw(title, message, 'info', 'desktop');
+  }
+  if (config.sound.enabled) {
+    channels.sound = await dispatcher.sendRaw(title, message, 'info', 'sound');
+  }
+  if (config.webhook.enabled && config.webhook.url) {
+    channels.webhook = await dispatcher.sendRaw(title, message, 'info', 'webhook');
+  }
+
+  const results = Object.values(channels);
+  const ok = results.length > 0 && results.every(Boolean);
+  return {
+    ok,
+    ...channels,
+    message:
+      results.length === 0
+        ? t(locale, 'noChannelEnabled')
+        : ok
+          ? t(locale, 'testSucceeded')
+          : t(locale, 'testPartialFailed'),
+  };
+}
 
 export function apply(ctx: any, rawConfig: unknown, options?: ApplyOptions): void {
   const config = resolveConfig(rawConfig);
