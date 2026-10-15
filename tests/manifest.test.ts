@@ -44,7 +44,7 @@ test('manifest: files 白名单包含图标与本地化文件', () => {
   const files: string[] = readRootPackage().files;
 
   assert.ok(Array.isArray(files));
-  for (const expected of ['index.js', 'cordis.patch.yml', 'icon.svg', 'locale/*.json']) {
+  for (const expected of ['index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'locale/*.json']) {
     assert.ok(files.includes(expected), `files 必须包含 ${expected}，否则发布产物会丢文件`);
   }
 });

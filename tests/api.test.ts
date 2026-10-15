@@ -22,10 +22,10 @@ describe('Config Storage API', () => {
     );
 
     const result = readMergedConfig(tmpDir);
-    assert.equal(result.merged.plugins.notifier.enabled, true);
-    assert.equal(result.merged.plugins.notifier.locale, 'en');
-    assert.equal(result.base.plugins.notifier.locale, 'zh');
-    assert.equal(result.local.plugins.notifier.locale, 'en');
+    assert.equal(result.merged.plugins?.notifier.enabled, true);
+    assert.equal(result.merged.plugins?.notifier.locale, 'en');
+    assert.equal(result.base.plugins?.notifier.locale, 'zh');
+    assert.equal(result.local.plugins?.notifier.locale, 'en');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });

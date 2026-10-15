@@ -7,11 +7,13 @@
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./icon": "./icon.svg",
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json"
@@ -25,16 +27,18 @@
     "dsh-*"
   ],
   "scripts": {
-    "clean": "node -e \"const fs = require('node:fs'), path = require('node:path'); fs.rmSync('index.js', { force: true }); for (const d of fs.readdirSync('.').filter(n => n.startsWith('dsh-'))) { fs.rmSync(path.join(d, 'index.js'), { force: true }); fs.rmSync(path.join(d, 'client.js'), { force: true }); }\"",
+    "clean": "node -e \"const fs = require('node:fs'), path = require('node:path'); fs.rmSync('index.js', { force: true }); fs.rmSync('client.js', { force: true }); for (const d of fs.readdirSync('.').filter(n => n.startsWith('dsh-'))) { fs.rmSync(path.join(d, 'index.js'), { force: true }); fs.rmSync(path.join(d, 'client.js'), { force: true }); }\"",
     "build:self": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
+    "build:client": "esbuild src/client.tsx --bundle --platform=browser --format=iife --external:react --external:react-dom --outfile=client.js",
     "build:plugins": "npm run build --workspaces",
-    "build": "npm run build:plugins && npm run build:self",
+    "build": "npm run build:plugins && npm run build:client && npm run build:self",
     "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts",
     "test:notify": "node --experimental-strip-types dsh-notifier/bin/test-notify.ts",
     "typecheck": "npm run typecheck --workspaces && tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^24",
+    "@types/react": "^18.3.31",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
   }

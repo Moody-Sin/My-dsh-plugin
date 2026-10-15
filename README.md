@@ -91,21 +91,19 @@
 - **未知插件告警**：配置中若存在无法对应到任何已扫描子插件的键（改名、拼写错误或未安装），加载器会输出中文告警并列出当前已检测到的子插件名，避免配置被静默忽略。
 - **配置热重载**：保存 `plugins.config.json` 或 `plugins.config.local.json` 后约 300ms 自动生效 —— 启用 / 禁用的子插件会被动态挂载或销毁，持续启用的子插件则原地热更新参数，**无需重启 DSH**。
 
-## 原生设置表单（DSH Web GUI）
+## 原生设置表单与可视化配置面板（DSH Web GUI）
 
-在 DSH Web GUI 的 **「插件」→「@local/my-dsh-plugins」详情页**中，表单由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**，无需任何手写 UI 代码。
+本插件支持两种设置交互形式：
 
-表单覆盖 `plugins.notifier` 与 `plugins.subagent-model-indicator` 下的 **14 个可热改字段**：
+1. **设置中心专属标签页 (`settings.plugins.tab`)**：
+   - 打开 DSH Web「设置」→「内置插件」分区，点击 **「参数配置」** 标签页。
+   - 界面直观呈现当前所有子插件的运行状态与参数面板（桌面弹窗、系统提示音、事件触发时机、Webhook 离机配置、子智能体模型指示器）。
+   - **双向持久化保证**：支持选择写入 `plugins.config.local.json`（私有覆盖，防机密泄露）或 `plugins.config.json`（公开基础配置），保存后经聚合总线防抖队列**免重启秒级热生效**。
+   - **一键诊断测试**：点击「⚡ 发送测试通知」即可即时测试系统桌面弹窗、提示音与 Webhook 推送连通性。
 
-| 分组 | 字段 |
-| :--- | :--- |
-| 基础 | `plugins.notifier.enabled`（启用通知插件）、`plugins.notifier.locale`（语言设置 auto / zh / en）、`plugins.subagent-model-indicator.enabled`（启用子智能体模型指示器） |
-| 系统桌面弹窗 | `plugins.notifier.desktop.enabled` |
-| 系统提示音 | `plugins.notifier.sound.enabled` |
-| 事件通知 | `plugins.notifier.events.onTurnEnd`、`plugins.notifier.events.onQuestion`、`plugins.notifier.events.onApproval`、`plugins.notifier.events.onError`、`plugins.notifier.events.minDurationSeconds` |
-| Webhook 离机推送 | `plugins.notifier.webhook.enabled`、`plugins.notifier.webhook.provider`、`plugins.notifier.webhook.url`、`plugins.notifier.webhook.secret` |
-
-保存表单后经 DSH 原生 **volatile 引用**通道**免重启**即时生效：宿主就地刷新引用快照并发出 `loader/volatile-update`，加载器随即按新配置重新协调各子插件的装载状态。
+2. **DSH 原生设置表单（Schemastery Schema）**：
+   - 在 DSH Web GUI 的 **「插件」→「@local/my-dsh-plugins」详情页**中，表单由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**。
+   - 表单覆盖 `plugins.notifier` 与 `plugins.subagent-model-indicator` 下的 **14 个可热改字段**。
 
 > **⚠️ 配置优先级与表单的关系（务必知悉）**
 >

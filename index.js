@@ -1,7 +1,11 @@
 // src/index.ts
-import fs3 from "node:fs";
-import path3 from "node:path";
+import fs4 from "node:fs";
+import path4 from "node:path";
 import { fileURLToPath } from "node:url";
+
+// src/api.ts
+import fs2 from "node:fs";
+import path2 from "node:path";
 
 // src/config.ts
 import fs from "node:fs";
@@ -367,20 +371,123 @@ function getPluginConfig(config, pluginKey) {
   };
 }
 
+// src/api.ts
+function readMergedConfig(projectRoot) {
+  let base = {};
+  let local = {};
+  const basePath = path2.join(projectRoot, BASE_CONFIG_FILENAME);
+  const localPath = path2.join(projectRoot, LOCAL_CONFIG_FILENAME);
+  if (fs2.existsSync(basePath)) {
+    try {
+      const raw = fs2.readFileSync(basePath, "utf8").replace(/^\uFEFF/, "");
+      base = JSON.parse(raw);
+    } catch {
+      base = {};
+    }
+  }
+  if (fs2.existsSync(localPath)) {
+    try {
+      const raw = fs2.readFileSync(localPath, "utf8").replace(/^\uFEFF/, "");
+      local = JSON.parse(raw);
+    } catch {
+      local = {};
+    }
+  }
+  const merged = deepMerge(base, local);
+  return { base, local, merged };
+}
+function writeConfigFile(projectRoot, target, partialConfig) {
+  const filename = target === "base" ? BASE_CONFIG_FILENAME : LOCAL_CONFIG_FILENAME;
+  const filePath = path2.join(projectRoot, filename);
+  let existing = {};
+  if (fs2.existsSync(filePath)) {
+    try {
+      const raw = fs2.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+      existing = JSON.parse(raw);
+    } catch {
+      existing = {};
+    }
+  }
+  const next = deepMerge(existing, partialConfig);
+  const serialized = JSON.stringify(next, null, 2) + "\n";
+  const tmpPath = path2.join(projectRoot, `.${filename}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  fs2.writeFileSync(tmpPath, serialized, "utf8");
+  fs2.renameSync(tmpPath, filePath);
+}
+async function handleApiRequest(req, res, ctx) {
+  const url = new URL(req.url || "/", "http://127.0.0.1");
+  const pathname = url.pathname;
+  if (pathname === "/api/local-plugins/config" && req.method === "GET") {
+    try {
+      const configData = readMergedConfig(ctx.projectRoot);
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store"
+      });
+      res.end(JSON.stringify(configData));
+    } catch (err) {
+      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+  if (pathname === "/api/local-plugins/config" && req.method === "POST") {
+    try {
+      const chunks = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const raw = Buffer.concat(chunks).toString("utf8");
+      const body = JSON.parse(raw || "{}");
+      const target = body.target === "base" ? "base" : "local";
+      const config = body.config || {};
+      writeConfigFile(ctx.projectRoot, target, config);
+      ctx.onConfigSaved?.();
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store"
+      });
+      res.end(JSON.stringify({ ok: true, target }));
+    } catch (err) {
+      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+  if (pathname === "/api/local-plugins/test-notify" && req.method === "POST") {
+    try {
+      let result = { ok: true, message: "\u901A\u77E5\u6D4B\u8BD5\u5DF2\u53D1\u9001" };
+      if (typeof ctx.triggerTestNotify === "function") {
+        result = await ctx.triggerTestNotify();
+      }
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store"
+      });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: false, error: err?.message || String(err) }));
+    }
+    return true;
+  }
+  return false;
+}
+
 // src/scanner.ts
-import fs2 from "node:fs";
-import path2 from "node:path";
+import fs3 from "node:fs";
+import path3 from "node:path";
 import { pathToFileURL } from "node:url";
 var PLUGIN_DIR_PREFIX = "dsh-";
 function resolvePackageEntry(dirPath) {
-  const packagePath = path2.join(dirPath, "package.json");
-  if (!fs2.existsSync(packagePath)) return void 0;
+  const packagePath = path3.join(dirPath, "package.json");
+  if (!fs3.existsSync(packagePath)) return void 0;
   let pkg;
   try {
-    const raw = fs2.readFileSync(packagePath, "utf8").replace(/^\uFEFF/, "");
+    const raw = fs3.readFileSync(packagePath, "utf8").replace(/^\uFEFF/, "");
     pkg = JSON.parse(raw);
   } catch (error) {
-    console.warn(`[my-dsh-plugins] \u5B50\u63D2\u4EF6 ${path2.basename(dirPath)} \u7684 package.json \u89E3\u6790\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7:`, error);
+    console.warn(`[my-dsh-plugins] \u5B50\u63D2\u4EF6 ${path3.basename(dirPath)} \u7684 package.json \u89E3\u6790\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7:`, error);
     return void 0;
   }
   if (typeof pkg !== "object" || pkg === null) return void 0;
@@ -396,18 +503,18 @@ function resolvePackageEntry(dirPath) {
   return void 0;
 }
 function resolveEntryPath(dirPath) {
-  const indexFile = path2.join(dirPath, "index.js");
-  if (fs2.existsSync(indexFile)) return indexFile;
+  const indexFile = path3.join(dirPath, "index.js");
+  if (fs3.existsSync(indexFile)) return indexFile;
   const declared = resolvePackageEntry(dirPath);
   if (declared === void 0) return void 0;
-  const entryPath = path2.resolve(dirPath, declared);
-  return fs2.existsSync(entryPath) ? entryPath : void 0;
+  const entryPath = path3.resolve(dirPath, declared);
+  return fs3.existsSync(entryPath) ? entryPath : void 0;
 }
 function isDirectoryEntry(rootDir, entry) {
   if (entry.isDirectory()) return true;
   if (!entry.isSymbolicLink()) return false;
   try {
-    return fs2.statSync(path2.join(rootDir, entry.name), { throwIfNoEntry: false })?.isDirectory() === true;
+    return fs3.statSync(path3.join(rootDir, entry.name), { throwIfNoEntry: false })?.isDirectory() === true;
   } catch {
     return false;
   }
@@ -415,7 +522,7 @@ function isDirectoryEntry(rootDir, entry) {
 function scanPlugins(rootDir) {
   let entries;
   try {
-    entries = fs2.readdirSync(rootDir, { withFileTypes: true });
+    entries = fs3.readdirSync(rootDir, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -423,7 +530,7 @@ function scanPlugins(rootDir) {
   for (const entry of entries) {
     if (!isDirectoryEntry(rootDir, entry)) continue;
     if (!entry.name.startsWith(PLUGIN_DIR_PREFIX)) continue;
-    const dirPath = path2.join(rootDir, entry.name);
+    const dirPath = path3.join(rootDir, entry.name);
     const entryPath = resolveEntryPath(dirPath);
     if (entryPath === void 0) continue;
     plugins.push({
@@ -461,20 +568,20 @@ function resolveLogger(ctx) {
 }
 function isProjectRoot(dir) {
   try {
-    const packagePath = path3.join(dir, "package.json");
-    if (fs3.existsSync(packagePath)) {
-      const raw = fs3.readFileSync(packagePath, "utf8").replace(/^\uFEFF/, "");
+    const packagePath = path4.join(dir, "package.json");
+    if (fs4.existsSync(packagePath)) {
+      const raw = fs4.readFileSync(packagePath, "utf8").replace(/^\uFEFF/, "");
       if (JSON.parse(raw)?.name === ROOT_PACKAGE_NAME) return true;
     }
   } catch {
   }
-  return fs3.existsSync(path3.join(dir, BASE_CONFIG_FILENAME));
+  return fs4.existsSync(path4.join(dir, BASE_CONFIG_FILENAME));
 }
 function resolveProjectRoot() {
-  let current = path3.dirname(fileURLToPath(import.meta.url));
+  let current = path4.dirname(fileURLToPath(import.meta.url));
   while (true) {
     if (isProjectRoot(current)) return current;
-    const parent = path3.dirname(current);
+    const parent = path4.dirname(current);
     if (parent === current) break;
     current = parent;
   }
@@ -600,7 +707,7 @@ async function apply(ctx, config) {
     });
   };
   try {
-    watcher = fs3.watch(rootDir, (_eventType, filename) => {
+    watcher = fs4.watch(rootDir, (_eventType, filename) => {
       if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename)) && !String(filename).startsWith("dsh-")) {
         return;
       }
@@ -625,6 +732,66 @@ async function apply(ctx, config) {
     });
   } catch (error) {
     logger.warn("\u8BBE\u7F6E\u8868\u5355\u8054\u52A8\u76D1\u542C\u6CE8\u518C\u5931\u8D25\uFF0C\u8868\u5355\u53D8\u66F4\u9700\u91CD\u542F\u540E\u751F\u6548:", error);
+  }
+  try {
+    const apiHandler = async (req, res) => {
+      const handled = await handleApiRequest(req, res, {
+        projectRoot: rootDir,
+        logger,
+        onConfigSaved: () => {
+          logger.info("\u6536\u5230\u8BBE\u7F6E UI \u914D\u7F6E\u66F4\u65B0\uFF0C\u89E6\u53D1\u70ED\u91CD\u8F7D...");
+          queueReload("file");
+        }
+      });
+      if (!handled && !res.writableEnded) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Not Found");
+      }
+    };
+    if (typeof ctx?.webServer?.register === "function") {
+      ctx.effect?.(() => {
+        const unregisterExact = ctx.webServer.register({
+          kind: "prefix",
+          path: "/api/local-plugins",
+          handler: apiHandler
+        });
+        return () => {
+          unregisterExact?.();
+        };
+      });
+    }
+    const clientBundlePath = fs4.existsSync(path4.join(rootDir, "client.js")) ? path4.join(rootDir, "client.js") : path4.join(path4.dirname(fileURLToPath(import.meta.url)), "client.js");
+    const onIndexInject = (table) => {
+      try {
+        if (!Array.isArray(table)) return;
+        const alreadyInjected = table.some(
+          (row) => row?.kind === "script" && typeof row?.text === "string" && row.text.includes("@local/my-dsh-plugins/settings-ui")
+        );
+        if (alreadyInjected) return;
+        if (fs4.existsSync(clientBundlePath)) {
+          const clientCode = fs4.readFileSync(clientBundlePath, "utf8");
+          table.push({
+            kind: "script",
+            placement: "body",
+            text: clientCode
+          });
+        }
+      } catch (err) {
+        logger.warn("\u6CE8\u5165\u8BBE\u7F6E UI \u5BA2\u6237\u7AEF\u811A\u672C\u5931\u8D25:", err);
+      }
+    };
+    if (typeof ctx?.effect === "function") {
+      ctx.effect(() => {
+        const unlisten = ctx.on("webserver/index-inject", onIndexInject);
+        return () => {
+          unlisten?.();
+        };
+      });
+    } else {
+      ctx.on?.("webserver/index-inject", onIndexInject);
+    }
+  } catch (error) {
+    logger.warn("\u6CE8\u518C Web API \u4E0E\u811A\u672C\u6CE8\u5165\u5F02\u5E38:", error);
   }
   const cleanup = () => {
     active = false;

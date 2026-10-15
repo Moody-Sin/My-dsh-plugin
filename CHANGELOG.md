@@ -5,6 +5,13 @@
 ## [Unreleased]
 
 ### 新增 (Added)
+- **本地插件可视化设置 UI 与 Web REST 接口**：
+  - 注册 DSH 设置中心「内置插件」分区下的「参数配置」专属标签页（`settings.plugins.tab`，ID: `local-plugins-config`）。
+  - 基于 React 18 与 DSH 原生 Design Tokens（`--dsw-alias-*`、`--dsw-radius-*`）打造，支持深浅色模式无缝自适应。
+  - 支持对通知中心（dsh-notifier）各渠道开关、事件触发时机、耗时阈值、Webhook 离机推送及子智能体模型指示器进行所见即所得的可视化配置。
+  - **双向安全持久化**：支持自由选择保存至 `plugins.config.local.json`（私有覆盖，防机密泄露）或 `plugins.config.json`（公开基础配置），保存后经总线防抖队列免重启热生效。
+  - **一键通知连通性诊断**：在面板中点击「⚡ 发送测试通知」，直接连通后端执行跨平台桌面弹窗、系统音效与 Webhook 连通性测试。
+  - **Node 后端 REST API 与客户端无缝注入**：在总线 Loader 中通过 Cordis `ctx.webServer.register` 提供 `/api/local-plugins` 前缀路由，并通过 `webserver/index-inject` 双保险注入客户端脚本 bundle。
 - **子插件 Schema 动态联合自发现机制**：`src/config.ts` 新增 `registerPluginSchema()`，在扫描并装载子插件时自动探测其导出的 `Config` / `SCHEMA_DICT` 并动态并入根设置表单字典；未导出配置的子插件自动注入默认 `enabled` 开关，实现子插件即插即拔、根总线 0 维护。
 - **环境变量占位符默认值语法支持**：`src/config.ts` 中的 `interpolateEnvVariables` 新增 `${VAR_NAME:-default_value}` 语法解析，在变量未声明时自动回退为默认值，提升本地配置容错。
 - **子插件 `@local/dsh-subagent-model-indicator` (v0.1.0)**：

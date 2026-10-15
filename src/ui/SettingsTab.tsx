@@ -17,7 +17,7 @@ export function SettingsTab() {
     try {
       const res = await fetch('/api/local-plugins/config');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data: any = await res.json();
       setConfig(data.merged || { plugins: {} });
       setMessage(null);
     } catch (err: any) {
