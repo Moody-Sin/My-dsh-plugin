@@ -31,7 +31,7 @@ npm test
 
 该 mock 同时提供不依赖 `inject` 声明的安全读取入口 `ctx.get(name)`——这正是插件取可选服务 `sessionTitle` 的方式。据此锁定的行为是：
 
-- `inject` 含 `sessions`、**不含 `sessionTitle`**（写进去会让服务缺失时 fiber 永久 PENDING，通知全废）；
+- `inject` 为**空数组**、**不含 `sessionTitle`**（任何硬依赖在服务缺失时都会让 fiber 永久 PENDING，通知全废）；
 - 服务存在时经 `ctx.get` 解析出会话标题，通知正文带上 `会话: <标题>`；
 - 服务缺失时回退 `session.header.cwd`，再无来源则返回 `undefined`；
 - **服务完全缺失时插件仍正常激活、通知照常派发**，只是少一行标题，绝不因取标题失败而丢弃通知。

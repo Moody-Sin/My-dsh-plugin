@@ -24,7 +24,7 @@
   | :--- | :--- |
   | 启用 → 禁用 | `forks.get(key)` 取出 fiber → `delete` → `fiber.dispose?.()` |
   | 禁用 → 启用 | `ctx.plugin()` 动态补挂并登记到 `forks` |
-  | 持续启用 | `fiber.update?.(conf.config)` 原地热更新，**不销毁重建**（避免监听器抖动与通知丢失） |
+  | 持续启用 | `fiber.update?.(conf.config)` 更新配置。**注意：Cordis 的 `update()` 内部是 `restart()`（dispose 再 apply），并非原地热更新**，子插件不得在 `apply()` 内持有跨重启才有效的状态 |
   1. **配置文件被编辑**：`fs.watch` 监听**根目录本身**（而非具体文件，否则「新建 `plugins.config.local.json`」这一最常见场景无法被捕获），300ms 防抖合并编辑器连续写入，并按文件名白名单过滤无关变更。
   2. **DSH 设置表单被保存**：监听 `loader/volatile-update`（见下）。
 - 监听器与定时器均 `unref()`，不阻止宿主进程退出；`ctx.on('dispose')` 注销 watcher、置 `active = false`，杜绝句柄与定时器长期驻留（内存泄漏），同时防止 dispose 与重载竞态导致「宿主已卸载却仍在补挂插件」。

@@ -89,7 +89,7 @@
 
   变量未定义且无默认值时**原样保留占位符**（不会被静默替换为空串），便于直观发现漏配。
 - **未知插件告警**：配置中若存在无法对应到任何已扫描子插件的键（改名、拼写错误或未安装），加载器会输出中文告警并列出当前已检测到的子插件名，避免配置被静默忽略。
-- **配置热重载**：保存 `plugins.config.json` 或 `plugins.config.local.json` 后约 300ms 自动生效 —— 启用 / 禁用的子插件会被动态挂载或销毁，持续启用的子插件则原地热更新参数，**无需重启 DSH**。
+- **配置热重载**：保存 `plugins.config.json` 或 `plugins.config.local.json` 后约 300ms 自动生效 —— 启用 / 禁用的子插件会被动态挂载或销毁，持续启用的子插件会被重新装载以应用新参数，**无需重启 DSH**（由 Cordis `restart()` 完成，子插件内的跨重启状态应置于模块级）。
 
 ## 原生设置表单与可视化配置面板（DSH Web GUI）
 
@@ -98,8 +98,9 @@
 1. **设置中心专属标签页 (`settings.plugins.tab`)**：
    - 打开 DSH Web「设置」→「内置插件」分区，点击 **「参数配置」** 标签页。
    - 界面直观呈现当前所有子插件的运行状态与参数面板（桌面弹窗、系统提示音、事件触发时机、Webhook 离机配置、子智能体模型指示器）。
-   - **双向持久化保证**：支持选择写入 `plugins.config.local.json`（私有覆盖，防机密泄露）或 `plugins.config.json`（公开基础配置），保存后经聚合总线防抖队列**免重启秒级热生效**。
-   - **一键诊断测试**：点击「⚡ 发送测试通知」即可即时测试系统桌面弹窗、提示音与 Webhook 推送连通性。
+   - **分层编辑与持久化**：下拉框选择要编辑的**层**——`plugins.config.local.json`（私有覆盖，不进 Git）或 `plugins.config.json`（公开基础配置）。表单内容始终等于目标层自身，切换层即切换内容，**保存只会写入所选层**；local 层中的密钥绝不会被搬进随 Git 提交的 base 文件。保存后经聚合总线防抖队列**免重启秒级热生效**。
+   - **一键诊断测试**：点击「⚡ 发送测试通知」会通过 `dsh-notifier` 导出的 `sendTestNotification()` 真实走一遍已启用渠道（桌面弹窗 / 提示音 / Webhook），并回传逐渠道结果；失败时展示具体原因而非成功提示。各渠道**独立触发、独立统计**（桌面诊断不带内联声音），因此 Webhook 失败不会被误报成桌面失败，也不会重复推送。
+   - **密钥脱敏**：配置接口对 `secret` / `token` / `password` / `apiKey` 等字段返回掩码，前端原样回传表示「未修改」，服务端沿用磁盘真值。
 
 2. **DSH 原生设置表单（Schemastery Schema）**：
    - 在 DSH Web GUI 的 **「插件」→「@local/my-dsh-plugins」详情页**中，表单由 DSH 官方 `dsh-settings` 依据本插件导出的 `Config` **自动生成**。
@@ -117,7 +118,9 @@
 
 - `Config` 同时满足 **Schemastery**（`type` / `dict` / `meta` / `toJSON()` / `Symbol.for('schemastery')`）与 **Standard Schema v1**（`'~standard'` 同步返回 `{ value }`）双契约。
 - `toJSON()` **返回深拷贝**：DSH 投影引擎会就地 `delete node.meta.volatile`，返回共享引用会让表单在第二次渲染时整片消失。
-- 为 Schema 声明的**每个** volatile 路径（含用户未填写的）无条件建立 volatile 引用：DSH 的 `_commitVolatile()` 若发现引用集合为空会**立即返回**，导致整次保存被静默丢弃。
+- 为 Schema 声明的**每个** volatile 路径（含用户未填写的、以及 Schema 尚未声明但配置中实际出现的）无条件建立 volatile 引用：DSH 的 `_commitVolatile()` 若发现引用集合为空会**立即返回**，导致整次保存被静默丢弃。注意 `validate()` 由 Cordis 在 `apply()` **之前**调用，因此不能依赖「先注册子插件 Schema 再物化」。
+- 子插件 Schema 动态注册：根 `SCHEMA_DICT` 为空字典，字段全部由子插件导出的 `Config` 在装载时注入（单一真相）。注册器接受**函数型** `Config`（`Object.assign(fn, {...})` 是 Schemastery 常见写法），并为缺少 `meta` 的叶子补齐 `meta: {}`。
+- **REST API 只经 `connection.fetch` 注册，绝不注册 `webServer` 的 `/api/*` 前缀路由**：DSH 的 `webServer.match()` 是「最长前缀胜出」，插件注册的 `/api/local-plugins` 会抢在 `client-connection` 的鉴权前缀 `/api` 之前命中，导致接口完全绕过鉴权（密钥可被本机任意进程或跨站表单读走）。
 - volatile 引用协议基于 `Symbol.for('cosmokit.volatile.write')`，**不引入 `@deepseek-ai/cosmokit` 依赖**即可与官方实现完全互通。
 
 ## Bundle 资源清单

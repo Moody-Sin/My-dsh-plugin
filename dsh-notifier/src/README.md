@@ -12,14 +12,16 @@
 | [`channels/`](./channels/) | `desktop.ts`（桌面弹窗）、`sound.ts`（提示音）、`webhook.ts`（Webhook 推送）。 |
 | [`utils/xml.ts`](./utils/xml.ts) | `escapeXml()`：WinRT Toast XML 转义。 |
 | [`utils/i18n.ts`](./utils/i18n.ts) | `resolveLocale()` 语言判定、中英文词典 `t()` / `label()`。 |
+| [`utils/env.ts`](./utils/env.ts) | `interpolateEnvVariables()`：`${VAR}` / `${env:VAR}` / `${VAR:-default}` 插值，供插件运行时与 `bin/test-notify.ts` 共享。 |
 
 ## index.ts
 
-- `inject = ['sessions']` 为历史兼容保留，插件实际不使用会话存储。
+- `inject = []` 刻意为空：插件从不使用会话存储。曾声明 `['sessions']` 作为「历史兼容」，但那等于把可选增强写成硬依赖 —— 服务缺失时 Cordis 会把 fiber 永久挂在 PENDING，一条通知都发不出。
 - **`sessionTitle` 故意不写进 `inject`**：它是可选增强，一旦声明，服务缺失时 Cordis 会把 fiber 永久挂在 PENDING，一条通知都发不出。改由 `getSessionTitle()` 经 `ctx.get('sessionTitle')` 安全读取 —— Cordis 的 `ctx` 是 Proxy，读取未声明在 `inject` 中的服务属性会直接抛错，可选链挡不住。
 - 标题依次尝试 `get(session).title` → `titleOf()` → `title()`，再回退 `session.header.cwd`，最终可为 `undefined`（少一行标题，不影响送达）。
 - 四类监听器：`session/event`（`turn/start` 记起始时间、`turn/end` 算耗时）、`user-questions/request` 与 `approval/request`（waterfall，非阻塞派发后必调 `next()`）、`agent/error`；回调内均 `try/catch` 兜底，绝不阻断主流程。
-- `turnStartTimes` 上限 `MAX_TRACKED_TURNS = 200`（超限淘汰最旧键），`ctx.on('dispose')` 时清空。
+- `turnStartTimes` 为**模块级**：聚合总线热重载走 Cordis `restart()`，若在 `apply()` 内声明会被清空，导致「start 在重载前、end 在重载后」的轮次耗时归零并被阈值过滤掉。回收靠 `MAX_TRACKED_TURNS = 200` 容量淘汰 + `TURN_TIME_TTL_MS`（24h）过期，不依赖卸载时机。
+- `sendTestNotification()`：连通性诊断入口，供聚合总线设置 UI 的「⚡ 发送测试通知」按钮调用；未接线时该按钮会返回假成功。
 - 纯事件驱动模型：不占用任何网络端口，零常驻 HTTP 服务。
 
 ## config.ts
@@ -47,4 +49,5 @@
 - `webhook.ts`：飞书富文本卡片（按 `kind` 着色）、钉钉与企微 Markdown、Bark（跳转 DSH 控制台 + `badge` 角标）、Telegram（Markdown 正文，`secret` 作为 `chat_id`，URL 已带 `chat_id` 时不覆盖）、Discord（Rich Embed，按等级配色 + ISO 时间戳）、通用 JSON。飞书签名为 `HMAC-SHA256(key = "timestamp\nsecret", data = "")`，钉钉反之并把 sign 拼进 URL。
 - `isHighPriorityEvent()` 判定提问 / 审批 / `warning` / `error`，此类事件失败后短退避重试一次（默认 400ms），普通 `turn/end` 不重试；请求统一带 `AbortSignal.timeout(5000)`，异常收敛为 `false`。
 - `utils/xml.ts`：`escapeXml()` 先剥离 XML 非法控制字符（`\x00-\x08`、`\x0B`、`\x0C`、`\x0E-\x1F`、`\x7F`），再转义 `& < > " '`，用于把标题与正文安全注入 Toast XML 模板。
+- `utils/env.ts`：环境变量插值共享实现。此前 `bin/test-notify.ts` 自带一份副本，CLI 的诊断结论可能与生产行为漂移；现统一到本模块，CLI 仅做再导出以保持既有导入路径可用。
 - `utils/i18n.ts`：`resolveLocale(setting, env)` 在 `auto` 下按 `DSH_LOCALE` → `LANG` → `LC_ALL` 取首个可用值，以 `en` 开头（忽略大小写）判为英文，否则中文；`t()` 取词条，`label()` 追加冒号。locale 文件中的 `notifications` 段与之保持一致，由 `tests/manifest.test.ts` 锁定。

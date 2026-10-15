@@ -40,7 +40,26 @@
 
 ## 9. Cordis 依赖注入与 DSH Web 鉴权通道
 - **`export const inject` 语法是服务名数组或对象，不支持 `{ optional: [...] }`**：Cordis 内部通过 `Inject.resolve` 将 inject 结构扁平化。如果写成 `export const inject = { optional: ['webServer'] }`，Cordis 会提取键名，误认为插件依赖一个名为 `optional` 的服务，导致插件永远处于 `INACTIVE` 状态（state: 0）等待该服务，`apply()` 永远无法执行。可选服务应直接在 `apply(ctx)` 中通过 `ctx.inject(['serviceName'], callback)` 声明。
-- **DSH Web 客户端请求必须走 `connection.fetch` 鉴权通道**：DSH Web 的 `/api` 前缀路由受 `client-connection` 服务接管，所有未经其校验的请求直接返回 401 Unauthorized。当浏览器端通过 `fetch('/api/local-plugins/...')` 发起请求时，它携带浏览器会话 Cookie。插件必须通过 `ctx.inject(['connection'], connCtx => connCtx.connection.fetch.register({ path, methods, fetch }))` 注册标准 Web Request 路由，才能通过 `connection.admit()` 鉴权并正确响应。如果仅在 `webServer.register` 注册 `/api/local-plugins`，则会被阻断或发生路由错位。同时保留 `webServer.register` 作为双保险以兼容纯 HTTP 载体。
+- **DSH Web 客户端请求必须走 `connection.fetch` 鉴权通道**：DSH Web 的 `/api` 前缀路由受 `client-connection` 服务接管，未经其校验的请求返回 401。插件必须通过 `ctx.inject(['connection'], connCtx => connCtx.connection.fetch.register({ path, methods, fetch }))` 注册标准 Web Request 路由，才能经 `connection.admit()` 鉴权并正确响应。
+- **⚠️ 严禁在 `webServer` 上注册 `/api/*` 前缀路由（曾据此条写出高危漏洞）**：早期经验写的是「同时保留 `webServer.register` 作为双保险」，这是**错的**。DSH 的 `client-connection` 自己注册了 `/api` 前缀并在其中鉴权，而 `webServer.match()` 是「**最长前缀胜出**」——插件注册的 `/api/local-plugins` 比 `/api` 长，**必然抢在鉴权层前面命中**。后果是接口完全绕过鉴权：本机任意进程（或任意网页的跨站表单，`Content-Type: text/plain` 不触发 CORS 预检）都能读走 `plugins.config.local.json` 里的 Webhook 密钥并改写配置。同时请求体不再受宿主 `maxRequestBodyBytes` 约束。`/api/**` 路由只应经 `connection.fetch` 注册，没有例外。
+- **验证方式**：`curl` 不带任何 Cookie 直连该接口，若返回 200 即为鉴权被绕过——这条检查应写进集成测试，纯函数层测不出来。
 
+## 10. 配置物化与保存的静默失效
+- **`validate()` 先于 `apply()` 执行**：Cordis 在 `Fiber._reload()` 中先 `this.config = this._resolveConfig(this._config)`（触发 `Config['~standard'].validate`），**之后**才 `_execute()` 调 `apply()`。因此任何「在 `apply()` 里注册子插件 Schema、再由 `validate()` 按 Schema 物化」的设计都行不通 —— 校验那一刻 Schema 还没注册。必须为配置中实际出现的字段无条件建立 volatile 引用占位，否则 `volatileEntries()` 返回空数组，宿主 `_commitVolatile()` 立即返回，整次表单保存被**静默丢弃**（无报错、无日志）。
+- **Schema 未声明的字段同样需要引用**：`materializeVolatile()` 若对未声明的键原样透传，那些字段就不含引用，用户对它们的修改同样被静默丢弃。应按值的形状逐叶建立引用，保证任意形状的配置都具备热改通道。
+- **`Object.assign(fn, {...})` 形态的 Config 是函数不是对象**：Schemastery 风格的 `Config` 常常是函数。判定时只写 `typeof x === 'object'` 会把它们全部漏掉，退化成兜底节点并触发上面那条静默失效。判定必须接受 `function`。
+- **逐层编辑而非编辑合并视图**：设置 UI 若把「base 与 local 的合并结果」作为表单状态、再整体写回目标文件，选中「保存到 base」就会把 local 层的密钥复制进随 Git 提交的文件，彻底抵消分层意义。表单内容应始终等于目标层自身。
 
+## 11. 热重载的语义与状态存放位置
+- **Cordis `Fiber.update()` 是 `restart()`（dispose 再 apply），不是原地热更新**：`src/README.md` 曾写「原地热更新，不销毁重建」，与实现不符。子插件不得在 `apply()` 内持有跨重启才有效的状态（如 `dsh-notifier` 的轮次计时表），否则配置一改就丢事件。这类状态应置于模块级，并靠容量淘汰 + TTL 回收，不要依赖卸载时机清理。
+- **未接线的回调会产生假成功**：`triggerTestNotify` 曾定义了却没有任何调用点，前端点「发送测试通知」后收到 `{ ok: true }` 却一条通知都没发。凡是「定义了可选回调」的接口，调用方必须显式接线，且 `ok === false` 时前端要展示具体原因而不是成功态。
 
+## 11.5 诊断类接口的返回值语义
+- **「批量执行 + 聚合布尔返回值」会污染诊断结论**：一次调用派发多个渠道、只返回「是否全部成功」时，任一渠道失败会把其它明明成功的渠道也标记为失败（误报）。诊断类接口必须让每个目标**独立触发、独立统计**结果。
+- **布尔过滤参数要枚举完整，否则会漏成「全开」**：`{ soundOnly?, webhookOnly? }` 这种「排除型」选项缺了 `desktopOnly`，不传任何选项就变成三个渠道全开。涉及多目标的开关应改用**明确指定**（`channel: 'desktop' | 'sound' | 'webhook'`），而不是靠排除法。
+
+## 12. 重复真相与不可达代码
+- **构建产物同步校验不要用文件 mtime**：Git 在 `clone` / CI 检出时**不保留**原始修改时间，而是按检出顺序即时赋时。实测全新 clone 后 `src/` 下 9 个源文件都比 `index.js` 新，导致「源码 mtime > 产物 mtime」在完全干净的检出上误报。应改用 Git 提交次序 + 工作区脏改动这类 mtime 无关的判据；且比对粒度要是「产物对应的入口源文件」而非整个目录（一个包常有多个入口，只改 `client.ts` 时 `index.js` 无需重建）。
+- **同一份 Schema 不要在两处维护**：根总线手写一份子插件字段表、子插件自己再有一份，改一处忘另一处就会让表单形态取决于装载顺序。应让一方成为唯一真相（子插件导出，总线动态注册）。
+- **写「兜底路径」前先确认它可达**：`window.__DSH_SLOTS__` 这类猜想的全局变量、以及「扫 React Fiber 找 slot 服务 + 15 秒轮询」的兜底，若目标对象在官方包里全量 grep 都搜不到，就是死代码。DSH 在渲染 index.html 之前就输出了模块队列脚本，`__ModuleLoader__` 必然存在，只需这一条路径。
+- **产物入库就要有同步校验**：`.gitignore` 未忽略构建产物、而测试跑的是源码时，「改了源码忘了 build」不会让任何测试变红。应加一条时间戳校验（源码比产物新即失败）。刻意不要做「重建后逐字节比对」——那会把 esbuild 版本与 tsconfig 继承上下文锁进测试，脆弱且难诊断。
