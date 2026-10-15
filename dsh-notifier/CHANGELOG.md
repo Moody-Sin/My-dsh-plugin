@@ -4,9 +4,36 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-16
+
 ### 修复 (Fixed)
 - **Webhook 报文安全长度截断保护**：在 `sendWebhookNotification` 入口增加安全截断逻辑（上限 3000 字符），防止长错误堆栈超过平台上限（Telegram 4096 字符、企微 4096 字节等）导致 HTTP 400 失败并丢失关键告警。
 - **Webhook 失败可观测性日志**：网络请求失败或返回非 2xx 时，通过 `logFn` 输出清晰的包含 HTTP 状态码与响应体摘要的告警日志，便于连通性排查。
+- **热重载会吞掉正在进行的那一轮通知**：轮次计时表 `turnStartTimes` 由 `apply()` 内局部变量提升为**模块级**。
+  聚合总线热重载走 Cordis `restart()`（dispose 再 apply），局部计时表在重启时被清空，
+  导致「turn/start 在重载前、turn/end 在重载后」的轮次耗时记为 0，被 `minDurationSeconds` 过滤后**该轮结束通知静默丢失**。
+  回收改为容量淘汰（200 条）+ 24h TTL，不再依赖卸载时机。
+- **声明了用不到的 `inject = ['sessions']`**：改为空数组。插件从不使用会话存储；
+  把可选增强写成硬依赖会让服务缺失时 fiber 永久停在 PENDING，`apply()` 从不执行、一条通知都发不出，且无任何告警指向真正原因。
+- **`onTurnEnd` 读取已废弃的阈值字段**：删除对 `desktop.minDurationSeconds` 的回退读取（该回退在生产路径上不可达），
+  仅保留对残缺配置的最小 `?? 5` 兜底。
+
+### 新增 (Added)
+- **`sendTestNotification()` 连通性诊断入口**：供聚合总线设置 UI 的「⚡ 发送测试通知」按钮调用。
+  此前该按钮从未接线、永远返回假成功（点一下什么都没发却显示成功）。诊断走与生产事件相同的派发路径，
+  回传逐渠道结果与可读结论；支持注入 dispatcher 以便测试。
+- **`NotificationDispatcher.sendRaw()`**：向渠道直接推送自定义消息，用于连通性诊断。
+  诊断场景临时关闭防抖，避免连点两次被静默吞掉。
+- **诊断文案进入词典**：新增 `testTitle` / `testMessage` / `testSucceeded` / `testPartialFailed` / `noChannelEnabled` 中英文键。
+- **`src/utils/env.ts`**：环境变量插值共享实现，供插件运行时与 `bin/test-notify.ts` 复用，消除两份独立实现随时间漂移的风险。
+
+### 变更 (Changed)
+- **`sendRaw()` 改为单渠道明确指定**：入参由 `{ soundOnly?, webhookOnly? }` 改为必填的 `channel: 'desktop' | 'sound' | 'webhook'`。
+  原设计下诊断桌面会连带派发声音与 Webhook，导致 Webhook 重复推送；且聚合返回值会让 Webhook 失败时
+  （桌面弹窗明明成功）被误报为桌面失败。桌面渠道独立诊断时不再内联声音。
+- **WSL 探测结果缓存**：`isWslWithPowershell()` 缓存生产路径的探测结果。一次派发中
+  dispatcher / desktop / sound 三处都会调用，此前等于凭空三次文件系统探测。
+  显式传参（测试用法）仍实时探测，保证用例间确定性。
 
 ## [0.5.0] - 2026-10-12
 

@@ -2,7 +2,70 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.7.0] - 2026-10-16
+
+### 修复 (Fixed)
+
+本轮修复来自一次全仓评审，其中前三项为**安全与静默失效**级别缺陷。
+
+- **测试通知诊断渠道耦合（评审发现）**：`sendRaw()` 改为**单渠道明确指定**（`'desktop' | 'sound' | 'webhook'`）。
+  原实现的过滤参数缺少 `desktopOnly`，诊断桌面时（`sendRaw` 不传选项）会把桌面、提示音、Webhook **全部派发一遍**，
+  随后 Webhook 又被单独再发一次 —— 点击一次测试会收到两条重复的 Webhook 消息；
+  更严重的是返回值是「是否全部成功」的聚合布尔值，Webhook 失败会把明明成功弹窗的桌面渠道也**误报为失败**。
+  现在各渠道独立触发、独立统计，桌面诊断不内联声音（避免与声音测试重复发声）。
+
+- **Web REST API 绕过 DSH 鉴权（高危）**：删除 `src/index.ts` 中在 `webServer` 上注册的 `/api/local-plugins` 前缀路由，仅保留 `connection.fetch` 精确路由。
+  DSH 的 `client-connection` 已在 `/api` 前缀上做会话鉴权，而 `webServer.match()` 是「最长前缀胜出」，`/api/local-plugins` 必然抢在 `/api` 之前命中，
+  导致配置读写（含 `plugins.config.local.json` 中的 Webhook 密钥）完全绕过鉴权 —— 本机任意进程或任意网页的跨站表单都能读走密钥并改写配置。
+  修复后请求必经 `connection.admit()` 鉴权，且请求体受宿主 `maxRequestBodyBytes` 约束。
+- **设置 UI 把 local 私有秘密写进随 Git 提交的 base 文件**：`SettingsTab.tsx` 改为**逐层编辑**（表单内容即目标层自身），
+  不再把 `merged` 合并视图整体回写。此前选择「保存至 config.json」会把 local 层的 Webhook 密钥明文复制进 `plugins.config.json`，彻底抵消 local 分层的意义。
+- **「发送测试通知」按钮从未接线、永远返回假成功**：`src/api.ts` 的 `triggerTestNotify` 回调此前没有任何调用点，
+  点击后返回 `{ ok: true }` 却一条通知都没发。现由聚合总线调用 `dsh-notifier` 新增的 `sendTestNotification()` 诊断入口，
+  真实走一遍已启用渠道并回传逐渠道结果；`ok === false` 时前端展示具体原因而非成功提示。
+- **热重载会吞掉正在进行的那一轮通知**：Cordis `Fiber.update()` 内部是 `restart()`（dispose 再 apply）而非原地热更新，
+  而 `dsh-notifier` 的轮次计时表声明在 `apply()` 内，重启即被清空 —— 「start 在重载前、end 在重载后」的轮次耗时归零，
+  被 `minDurationSeconds` 过滤后**该轮结束通知静默丢失**。计时表已提升为模块级（靠容量淘汰 + 24h TTL 回收），
+  并同步修正了 `src/README.md` / 根 `README.md` 中「原地热更新」的错误表述。
+- **子插件 Schema 动态注册对函数型 `Config` 完全失效**：`registerPluginSchema()` 此前只接受 `typeof === 'object'`，
+  而两个子插件导出的 `Config` 都是 `Object.assign(function(){}, {...})`（typeof 为 `function`），
+  导致注册退化成「只有一个 enabled 开关」的兜底节点。更严重的是这会让物化出的 volatile 引用数为 0，
+  而宿主 `LoaderEntry._commitVolatile()` 在引用集合为空时**立即返回**，整次设置表单保存被静默丢弃（无报错、无日志）。
+- **Schema 未声明的字段没有热改通道**：`materializeVolatile()` 对 Schema 未声明的键走 `clonePlain()` 原样透传，
+  那些字段因而不含引用，用户对它们的修改同样会被宿主静默丢弃。现改为按值形状逐叶建立引用。
+- **子插件 Schema 叶子缺 `meta` 会让设置面板崩溃**：`registerPluginSchema()` 现统一补齐 `meta: {}`。
+  DSH 的 `isVolatilePath()` 无条件读取 `node.meta.volatile`，缺失即抛 `TypeError`。
+- **`dsh-notifier` 声明了它自己承认用不到的 `inject = ['sessions']`**：改为空数组。
+  把可选增强写成硬依赖会让服务缺失时 fiber 永久停在 PENDING，`apply()` 从不执行、一条通知都发不出。
+- **配置 API 明文返回密钥**：`readMergedConfig()` 现对 `secret` / `token` / `password` / `apiKey` 等字段脱敏为掩码；
+  前端回传掩码表示「未修改」，服务端沿用磁盘真实值，避免保存一次就把密钥写成一串圆点。
+
+### 变更 (Changed)
+
+- **子插件 Schema 改为单一真相**：删除 `src/config.ts` 中手写的 notifier / subagent-model-indicator 字段表，
+  根 `SCHEMA_DICT` 现为空字典，全部由 `registerPluginSchema()` 在装载时按子插件自己导出的 `Config` 填充，
+  消除与子插件那份必须同步修改的重复真相。
+- **热重载过滤收紧**：`fs.watch` 不再把「子插件目录内的文件写入」当作事件（esbuild 重建 `index.js` 不改变扫描结果，
+  却会让每个子插件走一次 `restart()`）。改为按「配置文件的精确文件名」+「`dsh-*` 目录存在性变化」判定，抹平平台差异。
+- **版本发布**：`0.6.0` → `0.7.0`，把长期挂在 `[Unreleased]` 的已发布功能落版。
+
+### 删除 (Removed)
+
+- **两处不可达的客户端兜底注入**：删除 `src/client.tsx` 的 `mountDirectSlot()`（读 `window.__DSH_SLOTS__`，该全局对象在 DSH 官方包中不存在）
+  与 `dsh-subagent-model-indicator/src/client.ts` 中「扫 React Fiber 找 slot 服务 + 500ms × 30 次共 15 秒轮询」的整套兜底。
+  DSH 在渲染 index.html 之前就输出了模块队列脚本，`__ModuleLoader__` 必然存在，这两条路径从未被执行。
+- **`onTurnEnd` 中自认不可达的阈值回退**：删除对已废弃字段 `desktop.minDurationSeconds` 的读取（该回退在生产路径上不可达），
+  仅保留对残缺配置的最小 `?? 5` 兜底。
+- **`dsh-notifier/bin/test-notify.ts` 中复制的两个实现**：向上查找与环境变量插值现改为复用 `src/utils/env.ts`，
+  保证 CLI 的诊断结论与生产行为一致。
+
+### 新增 (Added)
+
+- `dsh-notifier` 导出 `sendTestNotification()` 连通性诊断入口，与 `NotificationDispatcher.sendRaw()` 配套。
+- `dsh-notifier/src/utils/env.ts`：环境变量插值共享实现。
+- WSL 探测结果缓存（`isWslWithPowershell`），一次派发不再重复三次文件系统探测。
+- 测试：`tests/e2e.test.ts` 重写为真实 `node:http` 集成测试（鉴权、脱敏、分层写入、非法请求体、404、fetch 适配层一致性）；
+  `tests/build-sync.test.ts` 新增产物与源码同步性校验（源码比产物新即失败）。
 
 ### 新增 (Added)
 - **本地插件可视化设置 UI 与 Web REST 接口**：
