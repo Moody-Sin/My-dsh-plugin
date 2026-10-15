@@ -299,7 +299,11 @@ export async function apply(ctx: any, config?: any): Promise<void> {
           const fiber = await mountPlugin(ctx, plugin, next.config, logger);
           if (fiber) forks.set(key, fiber);
         } else if (wasEnabled && next.enabled) {
-          // 持续启用：若尚未挂载（例如之前启动时异常或新装入但默认启用），则补挂；否则原地更新配置
+          // 持续启用：若尚未挂载（例如之前启动时异常或新装入但默认启用），则补挂；否则更新配置。
+          //
+          // 注意：Cordis 的 `Fiber.update()` 内部是 `restart()`（dispose 再 apply），
+          // **并非**原地热更新。子插件不得在 `apply()` 内持有跨重启才有效的状态
+          // （例如 dsh-notifier 的轮次计时表必须放在模块级），否则配置一改就丢事件。
           if (!forks.has(key)) {
             const fiber = await mountPlugin(ctx, plugin, next.config, logger);
             if (fiber) forks.set(key, fiber);
@@ -335,15 +339,36 @@ export async function apply(ctx: any, config?: any): Promise<void> {
   };
 
   try {
+    /**
+     * 判定该文件事件是否真的需要重新协调子插件。
+     *
+     * 只有两类变化有意义：
+     * 1. 配置文件被增删改；
+     * 2. 某个 `dsh-*` **目录本身**被新建或删除。
+     *
+     * 刻意**不**把「子插件目录内的文件写入」当成事件：`dsh-notifier/index.js`
+     * 被 esbuild 重建并不改变 `scanPlugins()` 的结果，却会让每个子插件走上
+     * Cordis `restart()`（dispose 再 apply），白白丢事件。Linux inotify 下
+     * 子目录写入本就不会冒泡到父目录，但 macOS FSEvents 与 Windows 的语义不同，
+     * 因此这里用「目录存在性 vs 上次扫描结果」显式判定，抹平平台差异。
+     */
+    const shouldReload = (filename: string | undefined): boolean => {
+      // 极少数平台/文件系统事件不带 filename。此时无法判断是否该重载，
+      // 若一律当作「需要重载」，一次目录抖动就会重启全部子插件（正是上面要避免的），
+      // 因此选择跳过；配置文件本身仍会在带名的事件下被可靠捕获。
+      if (!filename) return false;
+      if (WATCHED_CONFIG_FILENAMES.has(filename)) return true;
+      if (!filename.startsWith('dsh-')) return false;
+
+      // 目录存在性与上次扫描结果不一致 → 发生了目录增删
+      const stillDirectory =
+        fs.statSync(path.join(rootDir, filename), { throwIfNoEntry: false })?.isDirectory() === true;
+      const wasScanned = currentScanned.some((plugin) => plugin.dirName === filename);
+      return stillDirectory !== wasScanned;
+    };
+
     watcher = fs.watch(rootDir, (_eventType, filename) => {
-      // 过滤无关文件变更：仅关注核心配置文件变动以及 dsh-* 子插件目录的增删
-      if (
-        filename &&
-        !WATCHED_CONFIG_FILENAMES.has(String(filename)) &&
-        !String(filename).startsWith('dsh-')
-      ) {
-        return;
-      }
+      if (!shouldReload(filename ? String(filename) : undefined)) return;
 
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -389,6 +414,25 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       onConfigSaved: () => {
         logger.info('收到设置 UI 配置更新，触发热重载...');
         queueReload('file');
+      },
+      // 「⚡ 发送测试通知」按钮：必须真实连通通知渠道，绝不能返回假成功。
+      // 总持有该子插件的模块定义，直接调用其导出的诊断函数，
+      // 从而与用户当前生效的文件配置完全一致（含 local 私有覆盖）。
+      triggerTestNotify: async () => {
+        // ESM 模块缓存保证重复 import 零成本，这里无需额外记忆化
+        const plugin = scanPlugins(rootDir).find((item) => item.pluginKey === 'notifier');
+        if (!plugin) {
+          return { ok: false, message: '未扫描到通知插件 dsh-notifier' };
+        }
+        const conf = getPluginConfig(resolveLatest(), 'notifier');
+        if (!conf.enabled) {
+          return { ok: false, message: '通知插件当前已禁用，请先启用后再测试' };
+        }
+        const pluginDef = await importPluginDef(plugin.entryUrl);
+        if (typeof pluginDef?.sendTestNotification !== 'function') {
+          return { ok: false, message: '通知插件未导出诊断入口 sendTestNotification' };
+        }
+        return await pluginDef.sendTestNotification(conf.config);
       },
     };
 

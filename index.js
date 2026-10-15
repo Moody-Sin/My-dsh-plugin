@@ -655,10 +655,16 @@ async function apply(ctx, config) {
     });
   };
   try {
+    const shouldReload = (filename) => {
+      if (!filename) return false;
+      if (WATCHED_CONFIG_FILENAMES.has(filename)) return true;
+      if (!filename.startsWith("dsh-")) return false;
+      const stillDirectory = fs4.statSync(path4.join(rootDir, filename), { throwIfNoEntry: false })?.isDirectory() === true;
+      const wasScanned = currentScanned.some((plugin) => plugin.dirName === filename);
+      return stillDirectory !== wasScanned;
+    };
     watcher = fs4.watch(rootDir, (_eventType, filename) => {
-      if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename)) && !String(filename).startsWith("dsh-")) {
-        return;
-      }
+      if (!shouldReload(filename ? String(filename) : void 0)) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = void 0;
@@ -688,6 +694,24 @@ async function apply(ctx, config) {
       onConfigSaved: () => {
         logger.info("\u6536\u5230\u8BBE\u7F6E UI \u914D\u7F6E\u66F4\u65B0\uFF0C\u89E6\u53D1\u70ED\u91CD\u8F7D...");
         queueReload("file");
+      },
+      // 「⚡ 发送测试通知」按钮：必须真实连通通知渠道，绝不能返回假成功。
+      // 总持有该子插件的模块定义，直接调用其导出的诊断函数，
+      // 从而与用户当前生效的文件配置完全一致（含 local 私有覆盖）。
+      triggerTestNotify: async () => {
+        const plugin = scanPlugins(rootDir).find((item) => item.pluginKey === "notifier");
+        if (!plugin) {
+          return { ok: false, message: "\u672A\u626B\u63CF\u5230\u901A\u77E5\u63D2\u4EF6 dsh-notifier" };
+        }
+        const conf = getPluginConfig(resolveLatest(), "notifier");
+        if (!conf.enabled) {
+          return { ok: false, message: "\u901A\u77E5\u63D2\u4EF6\u5F53\u524D\u5DF2\u7981\u7528\uFF0C\u8BF7\u5148\u542F\u7528\u540E\u518D\u6D4B\u8BD5" };
+        }
+        const pluginDef = await importPluginDef(plugin.entryUrl);
+        if (typeof pluginDef?.sendTestNotification !== "function") {
+          return { ok: false, message: "\u901A\u77E5\u63D2\u4EF6\u672A\u5BFC\u51FA\u8BCA\u65AD\u5165\u53E3 sendTestNotification" };
+        }
+        return await pluginDef.sendTestNotification(conf.config);
       }
     };
     const registerConnectionRoutes = (connCtx) => {
