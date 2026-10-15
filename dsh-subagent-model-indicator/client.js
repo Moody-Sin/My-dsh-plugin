@@ -55,29 +55,22 @@
     if (w.__subagent_model_indicator_registered__) return;
     w.__subagent_model_indicator_registered__ = true;
     const ml = w.__ModuleLoader__;
-    if (ml?.load) {
-      const alreadyInQueue = ml.mode === "queue" && Array.isArray(ml.pendingQueue) && ml.pendingQueue.some((reg) => reg.id === PLUGIN_ID);
-      if (!alreadyInQueue) {
-        try {
-          ml.load({
-            id: PLUGIN_ID,
-            factory(require2) {
-              const React = require2("react");
-              return {
-                inject: ["slots", "sessions"],
-                apply(ctx) {
-                  setupSlots(ctx, React);
-                }
-              };
-            }
-          });
-        } catch {
-        }
+    if (!ml?.load) return;
+    const alreadyInQueue = ml.mode === "queue" && Array.isArray(ml.pendingQueue) && ml.pendingQueue.some((reg) => reg.id === PLUGIN_ID);
+    if (alreadyInQueue) return;
+    ml.load({
+      id: PLUGIN_ID,
+      factory(require2) {
+        const React = require2("react");
+        return {
+          // 会话数据经 props.useSessions 由插槽宿主注入，无需声明 sessions 服务依赖
+          inject: ["slots"],
+          apply(ctx) {
+            setupSlots(ctx, React);
+          }
+        };
       }
-    }
-    if (typeof document !== "undefined") {
-      mountDirectSlot();
-    }
+    });
   }
   function setupSlots(ctx, React) {
     function SubagentModelBadge(props) {
@@ -148,135 +141,6 @@
         SubagentModelBadge
       )
     );
-  }
-  function mountDirectSlot() {
-    function tryInject() {
-      const rootContainer = document.getElementById("root") || document.body;
-      const candidates = [rootContainer, ...Array.from(rootContainer.querySelectorAll(":scope > div, :scope > main, :scope > section, header, nav")).slice(0, 50)];
-      let slotService = null;
-      for (const el of candidates) {
-        if (!el) continue;
-        const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
-        if (!key) continue;
-        let f = el[key];
-        let depth = 0;
-        while (f && depth++ < 30) {
-          if (f.type && typeof f.type === "object" && f.type.$$typeof === /* @__PURE__ */ Symbol.for("react.provider")) {
-            const val = f.memoizedProps?.value;
-            if (val && typeof val === "object" && typeof val.entriesOfSlot === "function") {
-              slotService = val;
-              break;
-            }
-          }
-          f = f.return;
-        }
-        if (slotService) break;
-      }
-      if (!slotService || slotService.__subagent_model_hooked) return false;
-      slotService.__subagent_model_hooked = true;
-      const origEntriesOfSlot = slotService.entriesOfSlot.bind(slotService);
-      slotService.entriesOfSlot = function(name) {
-        const res = origEntriesOfSlot(name);
-        if (name === "conversation.session.header.actions") {
-          const alreadyHas = res.some(
-            (e) => e.options?.id === "subagent-model-indicator"
-          );
-          if (alreadyHas) return res;
-          return [
-            ...res,
-            {
-              component: function SubagentModelBadgeDirect(props) {
-                const session = props.useSessions?.(
-                  (state) => state.byId[props.sessionId]
-                );
-                const isSubagent = session?.origin === "subagent" || session?.projectionValues?.subagent != null;
-                if (!isSubagent) return null;
-                const modelInfo = session?.projectionValues?.modelSelection?.next ?? session?.projectionValues?.modelSelection?.lastUsed;
-                if (!modelInfo || !modelInfo.model) return null;
-                const rawModel = modelInfo.model;
-                const modelName = formatModelName(rawModel, true);
-                const effort = modelInfo.reasoningEffort;
-                const text = formatModelBadgeText(modelName, effort);
-                const title = formatModelTooltip(
-                  modelInfo.provider,
-                  rawModel,
-                  effort,
-                  isChineseLocale()
-                );
-                const svgElement = {
-                  $$typeof: /* @__PURE__ */ Symbol.for("react.element"),
-                  type: "svg",
-                  key: "subagent-model-icon",
-                  ref: null,
-                  props: {
-                    width: 13,
-                    height: 13,
-                    viewBox: "0 0 16 16",
-                    fill: "none",
-                    xmlns: "http://www.w3.org/2000/svg",
-                    stroke: "currentColor",
-                    strokeWidth: "1.2",
-                    style: { opacity: 0.8, flex: "none" },
-                    "aria-hidden": "true",
-                    children: {
-                      $$typeof: /* @__PURE__ */ Symbol.for("react.element"),
-                      type: "path",
-                      key: null,
-                      ref: null,
-                      props: {
-                        d: "M8 1.5C4.41 1.5 1.5 4.41 1.5 8s2.91 6.5 6.5 6.5 6.5-2.91 6.5-6.5S11.59 1.5 8 1.5zm0 2.5a2 2 0 110 4 2 2 0 010-4zm0 8c-2 0-3.5-1-4-2.5.5-1.5 2-2.5 4-2.5s3.5 1 4 2.5c-.5 1.5-2 2.5-4 2.5z"
-                      },
-                      _owner: null
-                    }
-                  },
-                  _owner: null
-                };
-                return {
-                  $$typeof: /* @__PURE__ */ Symbol.for("react.element"),
-                  type: "span",
-                  key: null,
-                  ref: null,
-                  props: {
-                    className: "SVAs4q_label",
-                    style: {
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      padding: "0 6px",
-                      height: "22px",
-                      borderRadius: "var(--dsw-radius-xs, 4px)",
-                      background: "var(--dsw-alias-fill-tsp-secondary, rgba(0, 0, 0, 0.04))",
-                      color: "var(--dsw-alias-label-secondary, #60646c)",
-                      fontSize: "12px",
-                      lineHeight: "22px",
-                      whiteSpace: "nowrap",
-                      fontWeight: 500
-                    },
-                    title,
-                    children: [svgElement, text]
-                  },
-                  _owner: null
-                };
-              },
-              options: { id: "subagent-model-indicator", order: 5 },
-              registrant: "@local/dsh-subagent-model-indicator"
-            }
-          ];
-        }
-        return res;
-      };
-      return true;
-    }
-    if (!tryInject()) {
-      let attempts = 0;
-      const maxAttempts = 30;
-      const timer = setInterval(() => {
-        attempts++;
-        if (tryInject() || attempts >= maxAttempts) {
-          clearInterval(timer);
-        }
-      }, 500);
-    }
   }
   registerClientExtension();
 })();
