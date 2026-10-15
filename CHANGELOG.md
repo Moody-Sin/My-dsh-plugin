@@ -22,6 +22,7 @@
   - 模型名称美化：增加可选 `trimVersionSuffix`，支持对 `-latest` 或类似 `-20241022` 等长版本日期后缀做优雅裁剪。
 
 ### 修复 (Fixed)
+- **客户端 Bundle 浏览器模块规范与顶层加载异常**：修复构建客户端前端 bundle 时因 IIFE 格式与 `--external:react` 在浏览器顶层生成 `__require("react")` 导致脚本加载阶段抛错 `Dynamic require of "react" is not supported` 并触发 `web boot: 1 entry did not activate / import failed` 的缺陷。重构构建流程为 CJS 闭包包装并安全对接 DSH 原生 `window.__ModuleLoader__.load`，从 factory 上下文解析 React，导出标准 `{ inject: ['slots'], apply(ctx) }`，并在根 `package.json` 补充 `"./package.json"` 导出，确保模块能够被 DSH 浏览器模块系统稳定识别和激活。
 - **总线热重载目录动态感知**：修复 `src/index.ts` 中 `scanned` 目录列表在初始化后闭包冻结的问题。每次执行 `reload()` 时重新调用 `scanPlugins(rootDir)`，使新增或物理移除的 `dsh-*` 子插件目录能够被动态识别、挂载与销毁。
 - **根加载器卸载 (Dispose) 级联释放**：在 `apply()` 的清理函数中补充对 `forks` 登记表所有子插件 Fiber 的 `fiber.dispose()` 级联调用与清理，彻底杜绝孤儿 Fiber 内存泄漏与事件重复监听。
 - **Webhook 报文安全长度截断保护**：`dsh-notifier/src/channels/webhook.ts` 针对消息正文设置 `3000` 字符上限，超长时自动截断并追加 `...[已截断]` 提示，防止因超长报错堆栈导致第三方 Webhook 平台（如 Telegram、飞书、企业微信、Discord）拒绝并返回 HTTP 400。

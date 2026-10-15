@@ -33,6 +33,8 @@ test('manifest: exports 暴露图标与本地化文件子路径', () => {
   const pkg = readRootPackage();
 
   assert.equal(pkg.exports['./icon'], './icon.svg', '必须暴露 ./icon 子路径供 DSH 读取 Bundle 图标');
+  assert.equal(pkg.exports['./client'], './client.js', '必须暴露 ./client 子路径供 DSH 客户端加载器读取');
+  assert.equal(pkg.exports['./package.json'], './package.json', '必须暴露 ./package.json 满足 DSH locatePkgJson 解析');
   assert.equal(
     pkg.exports['./locale/*.json'],
     './locale/*.json',

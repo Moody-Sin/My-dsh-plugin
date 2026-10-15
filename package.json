@@ -8,6 +8,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./package.json": "./package.json",
     "./icon": "./icon.svg",
     "./locale/*.json": "./locale/*.json"
   },
@@ -24,8 +25,7 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-settings-plugins",
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
       ],
       "platform": "web"
     }
@@ -36,7 +36,7 @@
   "scripts": {
     "clean": "node -e \"const fs = require('node:fs'), path = require('node:path'); fs.rmSync('index.js', { force: true }); fs.rmSync('client.js', { force: true }); for (const d of fs.readdirSync('.').filter(n => n.startsWith('dsh-'))) { fs.rmSync(path.join(d, 'index.js'), { force: true }); fs.rmSync(path.join(d, 'client.js'), { force: true }); }\"",
     "build:self": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
-    "build:client": "esbuild src/client.tsx --bundle --platform=browser --format=iife --external:react --external:react-dom --outfile=client.js",
+    "build:client": "node scripts/build-client.mjs",
     "build:plugins": "npm run build --workspaces",
     "build": "npm run build:plugins && npm run build:client && npm run build:self",
     "test": "npm test --workspaces && node --experimental-strip-types --test tests/*.test.ts",

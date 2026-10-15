@@ -4,6 +4,14 @@ import { SettingsTab } from './ui/SettingsTab.tsx';
 declare const window: any;
 declare const document: any;
 
+export const name = 'my-dsh-plugins-client';
+export const inject = ['slots'];
+
+export function apply(ctx: any) {
+  setupSettingsSlot(ctx, React);
+  mountDirectSlot();
+}
+
 /**
  * 客户端浏览器 bundle 入口：通过 __ModuleLoader__.load 注册设置标签页。
  */
@@ -30,9 +38,11 @@ export function registerSettingsUI() {
           factory(require: any) {
             const ReactMod = require('react');
             return {
-              inject: ['slots', 'locale'],
+              name,
+              inject,
               apply(ctx: any) {
                 setupSettingsSlot(ctx, ReactMod);
+                mountDirectSlot();
               },
             };
           },
