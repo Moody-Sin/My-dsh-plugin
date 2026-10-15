@@ -258,7 +258,7 @@ test('channels: sendWebhookNotification handles network failure gracefully', asy
   const ok = await sendWebhookNotification(
     config,
     { title: 'Alert', message: 'Fail', event: 'error' },
-    { fetchFn: failingFetch }
+    { fetchFn: failingFetch, logFn: () => {} }
   );
 
   assert.equal(ok, false, 'Should return false on fetch error without throwing');
@@ -307,7 +307,7 @@ test('channels: webhook retries once with backoff for high-priority events', asy
   const questionOk = await sendWebhookNotification(
     config,
     { title: '等待回答', message: '请确认', event: 'user-questions/request', kind: 'warning' },
-    { fetchFn: flakyFetch, retryDelayMs: 0 }
+    { fetchFn: flakyFetch, retryDelayMs: 0, logFn: () => {} }
   );
 
   assert.equal(questionOk, true, '高优先级事件首轮失败后应重试成功');
@@ -317,7 +317,7 @@ test('channels: webhook retries once with backoff for high-priority events', asy
   const approvalOk = await sendWebhookNotification(
     config,
     { title: '审批', message: '请求权限', event: 'approval/request', kind: 'warning' },
-    { fetchFn: flakyFetch, retryDelayMs: 0 }
+    { fetchFn: flakyFetch, retryDelayMs: 0, logFn: () => {} }
   );
   assert.equal(approvalOk, true);
   assert.equal(attempts, 2);
@@ -334,7 +334,7 @@ test('channels: webhook retries once with backoff for high-priority events', asy
   const status502Ok = await sendWebhookNotification(
     config,
     { title: '错误', message: '崩溃', event: 'agent/error', kind: 'error' },
-    { fetchFn: statusFlakyFetch, retryDelayMs: 0 }
+    { fetchFn: statusFlakyFetch, retryDelayMs: 0, logFn: () => {} }
   );
   assert.equal(status502Ok, true, '高优先级事件遇到 502 状态码时也应触发重试');
   assert.equal(statusAttempts, 2, '502 状态码下应重试一次');
@@ -343,7 +343,7 @@ test('channels: webhook retries once with backoff for high-priority events', asy
   const errorOk = await sendWebhookNotification(
     config,
     { title: '异常', message: 'boom', event: 'agent/error', kind: 'error' },
-    { fetchFn: flakyFetch, retryDelayMs: 0 }
+    { fetchFn: flakyFetch, retryDelayMs: 0, logFn: () => {} }
   );
   assert.equal(errorOk, true);
   assert.equal(attempts, 2);
@@ -359,7 +359,7 @@ test('channels: webhook does not retry ordinary turn/end success notifications',
   const ok = await sendWebhookNotification(
     { enabled: true, provider: 'generic', url: 'https://example.com/hook' },
     { title: '完成', message: 'done', event: 'turn/end', kind: 'success' },
-    { fetchFn: failingFetch, retryDelayMs: 0 }
+    { fetchFn: failingFetch, retryDelayMs: 0, logFn: () => {} }
   );
 
   assert.equal(ok, false);
@@ -376,7 +376,7 @@ test('channels: webhook retry is bounded and still returns false when both attem
   const ok = await sendWebhookNotification(
     { enabled: true, provider: 'generic', url: 'https://example.com/hook' },
     { title: '异常', message: 'boom', event: 'agent/error', kind: 'error' },
-    { fetchFn: failingFetch, retryDelayMs: 0 }
+    { fetchFn: failingFetch, retryDelayMs: 0, logFn: () => {} }
   );
 
   assert.equal(ok, false, '两次均失败时必须安全返回 false');
@@ -617,5 +617,44 @@ test('utils: isWslWithPowershell 跨平台探测边界条件', async () => {
     isWslWithPowershell('linux', (path) => path === WSL_POWERSHELL_PATH),
     true
   );
+});
+
+test('channels: webhook message 超过安全上限时自动截断保护', async () => {
+  let capturedBody = '';
+  const mockFetch = async (_url: any, init: any) => {
+    capturedBody = init.body;
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  const hugeMessage = 'A'.repeat(5000);
+  const ok = await sendWebhookNotification(
+    { enabled: true, provider: 'generic', url: 'https://example.com/hook' },
+    { title: 'Long Stack', message: hugeMessage, event: 'turn/end' },
+    { fetchFn: mockFetch }
+  );
+
+  assert.equal(ok, true);
+  const parsed = JSON.parse(capturedBody);
+  assert.ok(parsed.message.length <= 3000, '报文必须截断在 3000 字符内');
+  assert.match(parsed.message, /\[已截断\]/, '被截断报文必须带有已截断标记');
+});
+
+test('cli: bin/test-notify interpolateEnvVariables 支持占位符与默认值替换', async () => {
+  const { interpolateEnvVariables } = await import('../bin/test-notify.ts');
+  const prevUrl = process.env.TEST_HOOK_URL;
+  try {
+    process.env.TEST_HOOK_URL = 'https://hook.example.com/test';
+    const raw = '{"url": "${TEST_HOOK_URL}", "fallback": "${UNSET_VAR:-default_val}"}';
+    const resolved = interpolateEnvVariables(raw);
+    const parsed = JSON.parse(resolved);
+    assert.equal(parsed.url, 'https://hook.example.com/test');
+    assert.equal(parsed.fallback, 'default_val');
+  } finally {
+    if (prevUrl !== undefined) {
+      process.env.TEST_HOOK_URL = prevUrl;
+    } else {
+      delete process.env.TEST_HOOK_URL;
+    }
+  }
 });
 

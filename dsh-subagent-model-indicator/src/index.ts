@@ -18,36 +18,58 @@ export function apply(ctx: any, rawConfig: unknown): void {
   if (!config.enabled) return;
 
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-  const clientBundlePath = path.join(currentDir, 'client.js');
+  const clientBundlePath = fs.existsSync(path.join(currentDir, 'client.js'))
+    ? path.join(currentDir, 'client.js')
+    : path.join(currentDir, '..', 'client.js');
 
-  const injectToWebServer = (targetCtx: any) => {
-    targetCtx.on('webserver/index-inject', (table: any[]) => {
-      try {
-        if (fs.existsSync(clientBundlePath)) {
-          const clientCode = fs.readFileSync(clientBundlePath, 'utf8');
-          table.push({
-            kind: 'script',
-            placement: 'body',
-            text: clientCode,
-          });
-        }
-      } catch (err) {
-        ctx.logger?.warn?.('[dsh-subagent-model-indicator] 注入前端脚本失败:', err);
+  const onIndexInject = (table: any[]) => {
+    try {
+      if (!Array.isArray(table)) return;
+      // 防重保护：如果 table 中已存在本插件脚本，绝不重复注入
+      const alreadyInjected = table.some(
+        (row) =>
+          row?.kind === 'script' &&
+          typeof row?.text === 'string' &&
+          row.text.includes('@local/dsh-subagent-model-indicator'),
+      );
+      if (alreadyInjected) return;
+
+      if (fs.existsSync(clientBundlePath)) {
+        const clientCode = fs.readFileSync(clientBundlePath, 'utf8');
+        table.push({
+          kind: 'script',
+          placement: 'body',
+          text: clientCode,
+        });
       }
-    });
+    } catch (err) {
+      ctx.logger?.warn?.('[dsh-subagent-model-indicator] 注入前端脚本失败:', err);
+    }
   };
 
-  // 既支持直接在宿主上下文中监听，也支持在父级 root 监听
+  // 使用 ctx.effect 托管生命周期清理（兼容 Cordis v4 与 ctx.on('dispose')）
+  const cleanup = () => {
+    // 监听注销由 Cordis 生命周期机制自动管理
+  };
+
   try {
-    injectToWebServer(ctx);
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => {
+        const unlisten = ctx.on('webserver/index-inject', onIndexInject);
+        return () => {
+          unlisten?.();
+          cleanup();
+        };
+      });
+    } else if (typeof ctx?.on === 'function') {
+      ctx.on('webserver/index-inject', onIndexInject);
+      ctx.on('dispose', cleanup);
+    }
   } catch {
-    // 忽略
-  }
-  if (ctx.root && ctx.root !== ctx) {
     try {
-      injectToWebServer(ctx.root);
+      ctx.on?.('webserver/index-inject', onIndexInject);
     } catch {
-      // 忽略
+      // 容错降级
     }
   }
 }

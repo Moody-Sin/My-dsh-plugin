@@ -7,11 +7,11 @@ export const BASE_CONFIG_FILENAME = 'plugins.config.json';
 export const LOCAL_CONFIG_FILENAME = 'plugins.config.local.json';
 
 /**
- * 环境变量占位符：同时支持 `${VAR_NAME}` 与 `${env:VAR_NAME}` 两种写法。
+ * 环境变量占位符：支持 `${VAR_NAME}`、`${env:VAR_NAME}` 以及带默认值语法 `${VAR_NAME:-default_value}`。
  *
  * 变量名限定为 `[A-Za-z_][A-Za-z0-9_]*`，避免把 `${a.b}` 这类非环境变量写法误伤。
  */
-const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
 /**
  * 聚合加载器自身的配置模型。
@@ -314,6 +314,69 @@ attachToJSON({
 });
 
 /**
+ * 动态注册子插件导出的 Schema（或自动生成默认开关 Schema）。
+ *
+ * 允许在子插件被扫描并导入后，将其配置项合并入根 `SCHEMA_DICT.plugins.dict`，
+ * 从而无需修改根总线即可在 Web GUI 原生表单中渲染新子插件的设置。
+ */
+export function registerPluginSchema(
+  pluginKey: string,
+  schemaOrDict?: Record<string, any> | SchemaNode,
+): void {
+  const pluginsDict = SCHEMA_DICT.plugins?.dict;
+  if (!pluginsDict) return;
+
+  // 若子插件已有完整 Schema
+  if (schemaOrDict && typeof schemaOrDict === 'object') {
+    let nodeToAttach: SchemaNode;
+    if ('dict' in schemaOrDict && schemaOrDict.dict) {
+      nodeToAttach = {
+        type: 'object',
+        description: schemaOrDict.description || `${pluginKey} 插件配置`,
+        meta: { ...(schemaOrDict.meta || {}) },
+        dict: schemaOrDict.dict as Record<string, SchemaNode>,
+      };
+    } else {
+      nodeToAttach = {
+        type: 'object',
+        description: `${pluginKey} 插件配置`,
+        meta: {},
+        dict: schemaOrDict as Record<string, SchemaNode>,
+      };
+    }
+    // 确保包含 enabled 开关
+    if (nodeToAttach.dict && !nodeToAttach.dict.enabled) {
+      nodeToAttach.dict = {
+        enabled: {
+          type: 'boolean',
+          description: `启用 ${pluginKey} 插件`,
+          meta: { volatile: true },
+        },
+        ...nodeToAttach.dict,
+      };
+    }
+    attachToJSON(nodeToAttach);
+    pluginsDict[pluginKey] = nodeToAttach;
+  } else if (!pluginsDict[pluginKey]) {
+    // 默认兜底开关
+    const defaultNode: SchemaNode = {
+      type: 'object',
+      description: `${pluginKey} 插件配置`,
+      meta: {},
+      dict: {
+        enabled: {
+          type: 'boolean',
+          description: `启用 ${pluginKey} 插件`,
+          meta: { volatile: true },
+        },
+      },
+    };
+    attachToJSON(defaultNode);
+    pluginsDict[pluginKey] = defaultNode;
+  }
+}
+
+/**
  * 根 Schema 的 plain 快照（`dict` 即 `SCHEMA_DICT`，节点已带 `toJSON`）。
  *
  * `meta` 为 `{}` 而非 `{ volatile: true }`：根节点一旦标记 volatile，
@@ -463,20 +526,26 @@ export function deepMerge(target: any, source: any): any {
 }
 
 /**
- * 插值配置文本中的环境变量占位符（`${VAR_NAME}` 与 `${env:VAR_NAME}`）。
+ * 插值配置文本中的环境变量占位符（`${VAR_NAME}`、`${env:VAR_NAME}` 与 `${VAR_NAME:-default}`）。
  *
  * - 变量已定义时替换为对应值（空串也是合法取值，照常替换）；
- * - 经 JSON.stringify 安全转义并剥离首尾引号，防止 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法；
- * - 变量未定义时**原样保留占位符**，便于用户直观发现漏配的变量，
- *   而不是被静默替换成空串导致凭据以空值下发。
+ * - 变量未定义但提供了 `:-default` 默认值时替换为默认值；
+ * - 变量未定义且无默认值时**原样保留占位符**，便于用户直观发现漏配的变量，
+ *   而不是被静默替换成空串导致凭据以空值下发；
+ * - 经 JSON.stringify 安全转义并剥离首尾引号，防止 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法。
  *
  * 替换值经函数返回，因此变量内容中的 `$&` / `$1` 不会被当作替换模式二次解释。
  */
 export function interpolateEnvVariables(raw: string): string {
-  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string) => {
+  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string, defaultValue?: string) => {
     const value = process.env[varName];
-    if (value === undefined) return placeholder;
-    return JSON.stringify(value).slice(1, -1);
+    if (value !== undefined) {
+      return JSON.stringify(value).slice(1, -1);
+    }
+    if (defaultValue !== undefined) {
+      return JSON.stringify(defaultValue).slice(1, -1);
+    }
+    return placeholder;
   });
 }
 

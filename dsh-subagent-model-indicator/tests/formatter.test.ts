@@ -35,6 +35,17 @@ describe('formatModelName', () => {
     assert.equal(formatModelName(undefined), '');
     assert.equal(formatModelName(''), '');
   });
+
+  it('可选 trimVersionSuffix 为 true 时裁剪日期或 latest 后缀', () => {
+    assert.equal(
+      formatModelName('anthropic/claude-3-5-sonnet-20241022', true),
+      'Claude 3-5-sonnet',
+    );
+    assert.equal(
+      formatModelName('google/gemini-1.5-pro-latest', true),
+      'Gemini 1.5-pro',
+    );
+  });
 });
 
 describe('formatModelBadgeText', () => {

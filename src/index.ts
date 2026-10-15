@@ -9,6 +9,7 @@ import {
   deepMerge,
   getPluginConfig,
   loadUmbrellaConfig,
+  registerPluginSchema,
   resolveVolatileRefs,
   type UmbrellaLoaderConfig,
 } from './config.ts';
@@ -150,6 +151,14 @@ async function mountPlugin(
 ): Promise<any> {
   const pluginDef = await importPluginDef(plugin.entryUrl);
 
+  // 动态注册子插件导出的 Schema（若子插件导出了 Config / SCHEMA_DICT 则自动挂载至总线设置表单）
+  try {
+    const rawSchema = pluginDef?.Config ?? pluginDef?.SCHEMA_DICT ?? pluginDef?.schema;
+    registerPluginSchema(plugin.pluginKey, rawSchema);
+  } catch {
+    // 忽略自发现解析错误
+  }
+
   // 同一入口可能被重复装载（热重载 / 多处引用），命中已注册项时直接跳过。
   if (ctx.registry?.has?.(pluginDef)) return undefined;
 
@@ -209,7 +218,9 @@ export async function apply(ctx: any, config?: any): Promise<void> {
   /** 当前生效配置，热重载时用于对比启用状态的新旧差异 */
   let currentConfig = mergedConfig;
 
-  for (const plugin of scanned) {
+  let currentScanned = scanned;
+
+  for (const plugin of currentScanned) {
     const conf = getPluginConfig(currentConfig, plugin.pluginKey);
     if (!conf.enabled) continue;
 
@@ -241,9 +252,36 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     // dispose 与重载存在竞态：宿主已卸载后绝不能再补挂插件。
     if (!active) return;
 
+    // 重新扫描根目录以感知新加入或已删除的子插件目录
+    const latestScanned = scanPlugins(rootDir);
     const latestConfig = resolveLatest();
 
-    for (const plugin of scanned) {
+    if (latestScanned.length === 0) {
+      logger.warn(
+        `未在根目录 ${rootDir} 下扫描到任何 dsh-* 子插件，` +
+          '请检查是否已安装子插件，或项目根目录定位是否有误。',
+      );
+    } else {
+      warnUnknownPluginKeys(latestConfig, latestScanned, logger);
+    }
+
+    const latestScannedKeys = new Set(latestScanned.map((p) => p.pluginKey));
+
+    // 1. 卸载物理目录已不存在的子插件
+    for (const [key, fiber] of forks) {
+      if (!latestScannedKeys.has(key)) {
+        try {
+          forks.delete(key);
+          fiber?.dispose?.();
+          logger.info(`子插件 ${key} 目录已移除，已销毁实例`);
+        } catch (error) {
+          logger.warn(`销毁已移除子插件 ${key} 失败:`, error);
+        }
+      }
+    }
+
+    // 2. 协调当前存在的子插件装载状态
+    for (const plugin of latestScanned) {
       const key = plugin.pluginKey;
       const wasEnabled = getPluginConfig(currentConfig, key).enabled;
       const next = getPluginConfig(latestConfig, key);
@@ -256,23 +294,29 @@ export async function apply(ctx: any, config?: any): Promise<void> {
           forks.delete(key);
           fiber?.dispose?.();
         } else if (!wasEnabled && next.enabled) {
-          // 原未启用 → 现已启用：动态补挂，与首轮装载走完全相同的路径。
+          // 原未启用 → 现已启用（或新扫描出的插件）：动态补挂，与首轮装载走完全相同的路径。
           const fiber = await mountPlugin(ctx, plugin, next.config, logger);
           if (fiber) forks.set(key, fiber);
         } else if (wasEnabled && next.enabled) {
-          // 持续启用：原地热更新配置，避免销毁重建导致的监听器抖动与通知丢失。
-          forks.get(key)?.update?.(next.config);
+          // 持续启用：若尚未挂载（例如之前启动时异常或新装入但默认启用），则补挂；否则原地更新配置
+          if (!forks.has(key)) {
+            const fiber = await mountPlugin(ctx, plugin, next.config, logger);
+            if (fiber) forks.set(key, fiber);
+          } else {
+            forks.get(key)?.update?.(next.config);
+          }
         }
       } catch (error) {
         logger.warn(`子插件 ${key} 热重载失败:`, error);
       }
     }
 
+    currentScanned = latestScanned;
     currentConfig = latestConfig;
     logger.info(
       source === 'settings'
-        ? `设置表单变更已生效，共 ${scanned.length} 个子插件参与热重载`
-        : `配置文件变更已生效，共 ${scanned.length} 个子插件参与热重载`,
+        ? `设置表单变更已生效，共 ${latestScanned.length} 个子插件参与热重载`
+        : `配置文件变更已生效，共 ${latestScanned.length} 个子插件参与热重载`,
     );
   };
 
@@ -291,8 +335,14 @@ export async function apply(ctx: any, config?: any): Promise<void> {
 
   try {
     watcher = fs.watch(rootDir, (_eventType, filename) => {
-      // filename 在部分平台可能为 null；此时无法过滤，保守触发重载。
-      if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename))) return;
+      // 过滤无关文件变更：仅关注核心配置文件变动以及 dsh-* 子插件目录的增删
+      if (
+        filename &&
+        !WATCHED_CONFIG_FILENAMES.has(String(filename)) &&
+        !String(filename).startsWith('dsh-')
+      ) {
+        return;
+      }
 
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -330,7 +380,8 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     logger.warn('设置表单联动监听注册失败，表单变更需重启后生效:', error);
   }
 
-  // 宿主卸载插件时必须注销监听，否则句柄与定时器会长期驻留形成内存泄漏。
+  // 宿主卸载插件时必须注销监听并级联清理所有子插件 Fiber，
+  // 否则子插件的事件监听器与内存句柄会长期驻留形成内存泄漏与孤儿实例。
   // 在 Cordis v4 微内核中，生命周期通过 ctx.effect(() => () => cleanup()) 托管；
   // 同时向下兼容旧版或测试 Mock 的 ctx.on('dispose') 事件。
   const cleanup = () => {
@@ -341,6 +392,16 @@ export async function apply(ctx: any, config?: any): Promise<void> {
     }
     watcher?.close();
     watcher = undefined;
+
+    // 级联释放所有已挂载子插件的 Fiber
+    for (const [key, fiber] of forks) {
+      try {
+        fiber?.dispose?.();
+      } catch (err) {
+        logger.warn(`清理子插件 ${key} Fiber 失败:`, err);
+      }
+    }
+    forks.clear();
   };
 
   try {

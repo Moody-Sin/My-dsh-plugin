@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 var BASE_CONFIG_FILENAME = "plugins.config.json";
 var LOCAL_CONFIG_FILENAME = "plugins.config.local.json";
-var ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}/g;
+var ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 var SCHEMASTER_SYMBOL = /* @__PURE__ */ Symbol.for("schemastery");
 var VOLATILE_WRITE_SYMBOL = /* @__PURE__ */ Symbol.for("cosmokit.volatile.write");
 function isVolatileRef(value) {
@@ -200,6 +200,55 @@ attachToJSON({
   meta: {},
   dict: SCHEMA_DICT
 });
+function registerPluginSchema(pluginKey, schemaOrDict) {
+  const pluginsDict = SCHEMA_DICT.plugins?.dict;
+  if (!pluginsDict) return;
+  if (schemaOrDict && typeof schemaOrDict === "object") {
+    let nodeToAttach;
+    if ("dict" in schemaOrDict && schemaOrDict.dict) {
+      nodeToAttach = {
+        type: "object",
+        description: schemaOrDict.description || `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
+        meta: { ...schemaOrDict.meta || {} },
+        dict: schemaOrDict.dict
+      };
+    } else {
+      nodeToAttach = {
+        type: "object",
+        description: `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
+        meta: {},
+        dict: schemaOrDict
+      };
+    }
+    if (nodeToAttach.dict && !nodeToAttach.dict.enabled) {
+      nodeToAttach.dict = {
+        enabled: {
+          type: "boolean",
+          description: `\u542F\u7528 ${pluginKey} \u63D2\u4EF6`,
+          meta: { volatile: true }
+        },
+        ...nodeToAttach.dict
+      };
+    }
+    attachToJSON(nodeToAttach);
+    pluginsDict[pluginKey] = nodeToAttach;
+  } else if (!pluginsDict[pluginKey]) {
+    const defaultNode = {
+      type: "object",
+      description: `${pluginKey} \u63D2\u4EF6\u914D\u7F6E`,
+      meta: {},
+      dict: {
+        enabled: {
+          type: "boolean",
+          description: `\u542F\u7528 ${pluginKey} \u63D2\u4EF6`,
+          meta: { volatile: true }
+        }
+      }
+    };
+    attachToJSON(defaultNode);
+    pluginsDict[pluginKey] = defaultNode;
+  }
+}
 var SCHEMA_ROOT = {
   type: "object",
   description: "DSH \u805A\u5408\u603B\u7EBF\u914D\u7F6E",
@@ -277,10 +326,15 @@ function deepMerge(target, source) {
   return merged;
 }
 function interpolateEnvVariables(raw) {
-  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName) => {
+  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName, defaultValue) => {
     const value = process.env[varName];
-    if (value === void 0) return placeholder;
-    return JSON.stringify(value).slice(1, -1);
+    if (value !== void 0) {
+      return JSON.stringify(value).slice(1, -1);
+    }
+    if (defaultValue !== void 0) {
+      return JSON.stringify(defaultValue).slice(1, -1);
+    }
+    return placeholder;
   });
 }
 function readJsonFile(filePath) {
@@ -440,6 +494,11 @@ async function importPluginDef(entryUrl) {
 }
 async function mountPlugin(ctx, plugin, pluginConfig, logger) {
   const pluginDef = await importPluginDef(plugin.entryUrl);
+  try {
+    const rawSchema = pluginDef?.Config ?? pluginDef?.SCHEMA_DICT ?? pluginDef?.schema;
+    registerPluginSchema(plugin.pluginKey, rawSchema);
+  } catch {
+  }
   if (ctx.registry?.has?.(pluginDef)) return void 0;
   const fiber = await ctx.plugin(pluginDef, pluginConfig);
   if (fiber?.state !== void 0 && fiber.state !== 2) {
@@ -467,7 +526,8 @@ async function apply(ctx, config) {
   warnUnknownPluginKeys(mergedConfig, scanned, logger);
   const forks = /* @__PURE__ */ new Map();
   let currentConfig = mergedConfig;
-  for (const plugin of scanned) {
+  let currentScanned = scanned;
+  for (const plugin of currentScanned) {
     const conf = getPluginConfig(currentConfig, plugin.pluginKey);
     if (!conf.enabled) continue;
     try {
@@ -482,8 +542,28 @@ async function apply(ctx, config) {
   let active = true;
   const reload = async (source) => {
     if (!active) return;
+    const latestScanned = scanPlugins(rootDir);
     const latestConfig = resolveLatest();
-    for (const plugin of scanned) {
+    if (latestScanned.length === 0) {
+      logger.warn(
+        `\u672A\u5728\u6839\u76EE\u5F55 ${rootDir} \u4E0B\u626B\u63CF\u5230\u4EFB\u4F55 dsh-* \u5B50\u63D2\u4EF6\uFF0C\u8BF7\u68C0\u67E5\u662F\u5426\u5DF2\u5B89\u88C5\u5B50\u63D2\u4EF6\uFF0C\u6216\u9879\u76EE\u6839\u76EE\u5F55\u5B9A\u4F4D\u662F\u5426\u6709\u8BEF\u3002`
+      );
+    } else {
+      warnUnknownPluginKeys(latestConfig, latestScanned, logger);
+    }
+    const latestScannedKeys = new Set(latestScanned.map((p) => p.pluginKey));
+    for (const [key, fiber] of forks) {
+      if (!latestScannedKeys.has(key)) {
+        try {
+          forks.delete(key);
+          fiber?.dispose?.();
+          logger.info(`\u5B50\u63D2\u4EF6 ${key} \u76EE\u5F55\u5DF2\u79FB\u9664\uFF0C\u5DF2\u9500\u6BC1\u5B9E\u4F8B`);
+        } catch (error) {
+          logger.warn(`\u9500\u6BC1\u5DF2\u79FB\u9664\u5B50\u63D2\u4EF6 ${key} \u5931\u8D25:`, error);
+        }
+      }
+    }
+    for (const plugin of latestScanned) {
       const key = plugin.pluginKey;
       const wasEnabled = getPluginConfig(currentConfig, key).enabled;
       const next = getPluginConfig(latestConfig, key);
@@ -496,15 +576,21 @@ async function apply(ctx, config) {
           const fiber = await mountPlugin(ctx, plugin, next.config, logger);
           if (fiber) forks.set(key, fiber);
         } else if (wasEnabled && next.enabled) {
-          forks.get(key)?.update?.(next.config);
+          if (!forks.has(key)) {
+            const fiber = await mountPlugin(ctx, plugin, next.config, logger);
+            if (fiber) forks.set(key, fiber);
+          } else {
+            forks.get(key)?.update?.(next.config);
+          }
         }
       } catch (error) {
         logger.warn(`\u5B50\u63D2\u4EF6 ${key} \u70ED\u91CD\u8F7D\u5931\u8D25:`, error);
       }
     }
+    currentScanned = latestScanned;
     currentConfig = latestConfig;
     logger.info(
-      source === "settings" ? `\u8BBE\u7F6E\u8868\u5355\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D` : `\u914D\u7F6E\u6587\u4EF6\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${scanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D`
+      source === "settings" ? `\u8BBE\u7F6E\u8868\u5355\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${latestScanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D` : `\u914D\u7F6E\u6587\u4EF6\u53D8\u66F4\u5DF2\u751F\u6548\uFF0C\u5171 ${latestScanned.length} \u4E2A\u5B50\u63D2\u4EF6\u53C2\u4E0E\u70ED\u91CD\u8F7D`
     );
   };
   let reloadQueue = Promise.resolve();
@@ -515,7 +601,9 @@ async function apply(ctx, config) {
   };
   try {
     watcher = fs3.watch(rootDir, (_eventType, filename) => {
-      if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename))) return;
+      if (filename && !WATCHED_CONFIG_FILENAMES.has(String(filename)) && !String(filename).startsWith("dsh-")) {
+        return;
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = void 0;
@@ -546,6 +634,14 @@ async function apply(ctx, config) {
     }
     watcher?.close();
     watcher = void 0;
+    for (const [key, fiber] of forks) {
+      try {
+        fiber?.dispose?.();
+      } catch (err) {
+        logger.warn(`\u6E05\u7406\u5B50\u63D2\u4EF6 ${key} Fiber \u5931\u8D25:`, err);
+      }
+    }
+    forks.clear();
   };
   try {
     if (typeof ctx?.effect === "function") {

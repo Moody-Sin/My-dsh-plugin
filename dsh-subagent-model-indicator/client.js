@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   // src/formatter.ts
-  function formatModelName(fullModel) {
+  function formatModelName(fullModel, trimVersionSuffix = false) {
     if (!fullModel || typeof fullModel !== "string") return "";
     const parts = fullModel.split("/");
     let name = parts[parts.length - 1];
@@ -17,6 +17,9 @@
       name = name.replace(/^minimax-/i, "MiniMax-");
     } else if (name.toLowerCase().startsWith("qwen-")) {
       name = name.replace(/^qwen-/i, "Qwen-");
+    }
+    if (trimVersionSuffix) {
+      name = name.replace(/-(?:latest|\d{8})$/i, "");
     }
     return name;
   }
@@ -47,21 +50,29 @@
   }
   function registerClientExtension() {
     const PLUGIN_ID = "@local/dsh-subagent-model-indicator";
-    if (typeof window !== "undefined" && window.__ModuleLoader__?.load) {
-      try {
-        window.__ModuleLoader__.load({
-          id: PLUGIN_ID,
-          factory(require2) {
-            const React = require2("react");
-            return {
-              inject: ["slots", "sessions"],
-              apply(ctx) {
-                setupSlots(ctx, React);
-              }
-            };
-          }
-        });
-      } catch {
+    if (typeof window === "undefined") return;
+    const w = window;
+    if (w.__subagent_model_indicator_registered__) return;
+    w.__subagent_model_indicator_registered__ = true;
+    const ml = w.__ModuleLoader__;
+    if (ml?.load) {
+      const alreadyInQueue = ml.mode === "queue" && Array.isArray(ml.pendingQueue) && ml.pendingQueue.some((reg) => reg.id === PLUGIN_ID);
+      if (!alreadyInQueue) {
+        try {
+          ml.load({
+            id: PLUGIN_ID,
+            factory(require2) {
+              const React = require2("react");
+              return {
+                inject: ["slots", "sessions"],
+                apply(ctx) {
+                  setupSlots(ctx, React);
+                }
+              };
+            }
+          });
+        } catch {
+        }
       }
     }
     if (typeof document !== "undefined") {
@@ -76,7 +87,7 @@
       const modelInfo = session?.projectionValues?.modelSelection?.next ?? session?.projectionValues?.modelSelection?.lastUsed;
       if (!modelInfo || !modelInfo.model) return null;
       const rawModel = modelInfo.model;
-      const modelName = formatModelName(rawModel);
+      const modelName = formatModelName(rawModel, true);
       const effort = modelInfo.reasoningEffort;
       const text = formatModelBadgeText(modelName, effort);
       const title = formatModelTooltip(
@@ -140,13 +151,16 @@
   }
   function mountDirectSlot() {
     function tryInject() {
-      const elements = document.querySelectorAll("*");
+      const rootContainer = document.getElementById("root") || document.body;
+      const candidates = [rootContainer, ...Array.from(rootContainer.querySelectorAll(":scope > div, :scope > main, :scope > section, header, nav")).slice(0, 50)];
       let slotService = null;
-      for (const el of elements) {
+      for (const el of candidates) {
+        if (!el) continue;
         const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
         if (!key) continue;
         let f = el[key];
-        while (f) {
+        let depth = 0;
+        while (f && depth++ < 30) {
           if (f.type && typeof f.type === "object" && f.type.$$typeof === /* @__PURE__ */ Symbol.for("react.provider")) {
             const val = f.memoizedProps?.value;
             if (val && typeof val === "object" && typeof val.entriesOfSlot === "function") {
@@ -180,7 +194,7 @@
                 const modelInfo = session?.projectionValues?.modelSelection?.next ?? session?.projectionValues?.modelSelection?.lastUsed;
                 if (!modelInfo || !modelInfo.model) return null;
                 const rawModel = modelInfo.model;
-                const modelName = formatModelName(rawModel);
+                const modelName = formatModelName(rawModel, true);
                 const effort = modelInfo.reasoningEffort;
                 const text = formatModelBadgeText(modelName, effort);
                 const title = formatModelTooltip(

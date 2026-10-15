@@ -63,7 +63,7 @@ test('manifest: clean 脚本清理根与子插件的构建产物', () => {
 
   assert.equal(typeof clean, 'string', '必须提供 clean 脚本');
   assert.match(clean, /index\.js/, 'clean 必须清理根 Loader 产物');
-  assert.match(clean, /dsh-notifier\/index\.js/, 'clean 必须一并清理子插件产物');
+  assert.match(clean, /dsh-/, 'clean 必须一并清理 dsh-* 子插件产物');
 });
 
 // ── icon.svg ──────────────────────────────────────────────────────────────

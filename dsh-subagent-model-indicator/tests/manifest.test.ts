@@ -38,4 +38,25 @@ describe('manifest & package.json contract', () => {
     const en = JSON.parse(fs.readFileSync(enPath, 'utf8'));
     assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
   });
+
+  it('apply 对 webserver/index-inject 进行防重保护且不重复注册', async () => {
+    const { apply } = await import('../src/index.ts');
+    let injectedHandler: any;
+    const mockCtx = {
+      on: (event: string, handler: any) => {
+        if (event === 'webserver/index-inject') injectedHandler = handler;
+      },
+      effect: (cb: any) => cb(),
+    };
+
+    apply(mockCtx, { enabled: true });
+    assert.ok(injectedHandler, 'webserver/index-inject 监听器必须注册');
+
+    const table: any[] = [];
+    injectedHandler(table);
+    assert.equal(table.length, 1, '首次应当注入脚本');
+
+    injectedHandler(table);
+    assert.equal(table.length, 1, '重复触发事件时防重生效，不应二次注入');
+  });
 });

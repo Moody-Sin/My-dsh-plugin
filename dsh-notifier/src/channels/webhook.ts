@@ -13,7 +13,12 @@ export interface WebhookOptions {
   fetchFn?: typeof fetch;
   /** 高优先级事件重试前的退避延迟（毫秒），默认 400，测试可传 0。 */
   retryDelayMs?: number;
+  /** 自定义日志输出，默认 console.warn */
+  logFn?: (msg: string, ...args: unknown[]) => void;
 }
+
+/** 各渠道单条消息正文最大安全字符数，防止超长报错导致 HTTP 400 失败 */
+const MAX_WEBHOOK_MESSAGE_CHARS = 3000;
 
 /** DSH Web GUI 控制台地址，作为 Bark 通知的默认点击跳转目标。 */
 const DEFAULT_BARK_URL = 'http://127.0.0.1:3080';
@@ -42,7 +47,7 @@ function hasQueryParam(url: string, name: string): boolean {
 
 function generateFeishuSign(secret: string, timestamp: number): string {
   const stringToSign = `${timestamp}\n${secret}`;
-  return crypto.createHmac('sha256', stringToSign).update('').digest('base64');
+  return crypto.createHmac('sha256', stringToSign).digest('base64');
 }
 
 function generateDingTalkSign(secret: string, timestamp: number): string {
@@ -77,7 +82,13 @@ export async function sendWebhookNotification(
   try {
     let targetUrl = config.url;
     let body: any;
-    const { title, message, event, kind = 'info', metadata } = payload;
+    const { title, message: rawMessage, event, kind = 'info', metadata } = payload;
+
+    // 安全长度截断保护：防止超大堆栈/报错日志突破 Telegram/飞书/企微/Discord 单条大小限制
+    const message =
+      rawMessage && rawMessage.length > MAX_WEBHOOK_MESSAGE_CHARS
+        ? `${rawMessage.slice(0, MAX_WEBHOOK_MESSAGE_CHARS - 20)}\n...[已截断]`
+        : rawMessage;
 
     switch (config.provider) {
       case 'feishu': {
@@ -206,11 +217,23 @@ export async function sendWebhookNotification(
       body: JSON.stringify(body),
     };
 
+    const logger = options.logFn || console.warn;
+
     const send = async (): Promise<boolean> => {
       const response = await fetchImpl(targetUrl, {
         ...requestInit,
         signal: AbortSignal.timeout(5000),
       });
+      if (!response.ok) {
+        let errSnippet = '';
+        try {
+          const text = await response.text();
+          errSnippet = text ? ` - ${text.slice(0, 100)}` : '';
+        } catch {
+          // 忽略流读取错误
+        }
+        logger(`[dsh-notifier] Webhook 请求失败 [HTTP ${response.status}] [provider: ${config.provider}]${errSnippet}`);
+      }
       return response.ok;
     };
 
@@ -219,6 +242,7 @@ export async function sendWebhookNotification(
       firstSuccess = await send();
       if (firstSuccess) return true;
     } catch (firstError) {
+      logger(`[dsh-notifier] Webhook 发送异常 [provider: ${config.provider}]:`, firstError);
       if (!isHighPriorityEvent(event, kind)) {
         throw firstError;
       }

@@ -765,3 +765,42 @@ test('loadUmbrellaConfig: 未配置的环境变量不会让整份配置解析失
 
   assert.deepEqual(warnings, [], '未配置的环境变量不是错误，不得刷告警');
 });
+
+test('interpolateEnvVariables: 支持默认值语法 ${VAR:-default}', () => {
+  delete process.env.TEST_ABSENT_VAR;
+  process.env.TEST_EXISTING_VAR = 'real_value';
+
+  assert.equal(
+    interpolateEnvVariables('{"url": "${TEST_ABSENT_VAR:-http://127.0.0.1:8080}"}'),
+    '{"url": "http://127.0.0.1:8080"}',
+  );
+  assert.equal(
+    interpolateEnvVariables('{"url": "${TEST_EXISTING_VAR:-fallback}"}'),
+    '{"url": "real_value"}',
+  );
+});
+
+test('registerPluginSchema: 动态并入子插件 Schema 或生成默认 enabled 开关', async () => {
+  const { registerPluginSchema, SCHEMA_DICT } = await import('../src/config.ts');
+
+  // 1. 无 Schema 输入时生成默认 enabled 开关
+  registerPluginSchema('dynamic-plugin-a');
+  const nodeA = SCHEMA_DICT.plugins?.dict?.['dynamic-plugin-a'];
+  assert.ok(nodeA, '应当动态创建插件配置节点');
+  assert.equal(nodeA.type, 'object');
+  assert.equal(nodeA.dict?.enabled?.type, 'boolean');
+  assert.equal(nodeA.dict?.enabled?.meta?.volatile, true);
+  assert.equal(typeof nodeA.toJSON, 'function');
+
+  // 2. 输入带 dict 的自定义 Schema 并自动补齐 enabled 开关
+  registerPluginSchema('dynamic-plugin-b', {
+    dict: {
+      customField: { type: 'string', description: '自定义字段', meta: { volatile: true } },
+    },
+  });
+  const nodeB = SCHEMA_DICT.plugins?.dict?.['dynamic-plugin-b'];
+  assert.ok(nodeB, '应当动态挂载自定义配置节点');
+  assert.ok(nodeB.dict?.enabled, '应当自动补齐 enabled 开关');
+  assert.ok(nodeB.dict?.customField, '应当保留自定义字段');
+  assert.equal(typeof nodeB.toJSON, 'function');
+});

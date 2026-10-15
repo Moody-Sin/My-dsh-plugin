@@ -24,11 +24,26 @@ function findConfigFile(filename: string): string | undefined {
   return undefined;
 }
 
+const ENV_PLACEHOLDER_PATTERN = /\$\{(?:env:)?([a-zA-Z_][a-zA-Z0-9_]*)(?::-([^}]*))?\}/g;
+
+export function interpolateEnvVariables(raw: string): string {
+  return raw.replace(ENV_PLACEHOLDER_PATTERN, (placeholder, varName: string, defaultValue?: string) => {
+    const value = process.env[varName];
+    if (value !== undefined) {
+      return JSON.stringify(value).slice(1, -1);
+    }
+    if (defaultValue !== undefined) {
+      return JSON.stringify(defaultValue).slice(1, -1);
+    }
+    return placeholder;
+  });
+}
+
 function loadJsonFile(filepath?: string): Record<string, any> {
   if (!filepath) return {};
   try {
     const raw = fs.readFileSync(filepath, 'utf8').replace(/^\uFEFF/, '');
-    return JSON.parse(raw);
+    return JSON.parse(interpolateEnvVariables(raw));
   } catch {
     return {};
   }

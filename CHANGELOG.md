@@ -5,15 +5,21 @@
 ## [Unreleased]
 
 ### 新增 (Added)
+- **子插件 Schema 动态联合自发现机制**：`src/config.ts` 新增 `registerPluginSchema()`，在扫描并装载子插件时自动探测其导出的 `Config` / `SCHEMA_DICT` 并动态并入根设置表单字典；未导出配置的子插件自动注入默认 `enabled` 开关，实现子插件即插即拔、根总线 0 维护。
+- **环境变量占位符默认值语法支持**：`src/config.ts` 中的 `interpolateEnvVariables` 新增 `${VAR_NAME:-default_value}` 语法解析，在变量未声明时自动回退为默认值，提升本地配置容错。
 - **子插件 `@local/dsh-subagent-model-indicator` (v0.1.0)**：
   - 解决子智能体对话页面未展示其运行模型的问题。
   - 在会话头部操作区插槽 `conversation.session.header.actions` 挂载模型指示器徽标，读取 `session.projectionValues.modelSelection` 数据。
   - 严格限定仅在子智能体（`session.origin === 'subagent'`）时渲染，不侵入主会话模型选择器。
   - 遵循 DSH Design Tokens（`--dsw-radius-xs`、`--dsw-alias-fill-tsp-secondary`、`--dsw-alias-label-secondary`），支持中英文国际化与推理层级（Reasoning Effort）友好展示。
-  - 聚合总线配置无缝接入：在 `SCHEMA_DICT` 中注册 `subagent-model-indicator` 并标记 `volatile: true`，支持原生表单免重启热重载。
-
+  - 模型名称美化：增加可选 `trimVersionSuffix`，支持对 `-latest` 或类似 `-20241022` 等长版本日期后缀做优雅裁剪。
 
 ### 修复 (Fixed)
+- **总线热重载目录动态感知**：修复 `src/index.ts` 中 `scanned` 目录列表在初始化后闭包冻结的问题。每次执行 `reload()` 时重新调用 `scanPlugins(rootDir)`，使新增或物理移除的 `dsh-*` 子插件目录能够被动态识别、挂载与销毁。
+- **根加载器卸载 (Dispose) 级联释放**：在 `apply()` 的清理函数中补充对 `forks` 登记表所有子插件 Fiber 的 `fiber.dispose()` 级联调用与清理，彻底杜绝孤儿 Fiber 内存泄漏与事件重复监听。
+- **Webhook 报文安全长度截断保护**：`dsh-notifier/src/channels/webhook.ts` 针对消息正文设置 `3000` 字符上限，超长时自动截断并追加 `...[已截断]` 提示，防止因超长报错堆栈导致第三方 Webhook 平台（如 Telegram、飞书、企业微信、Discord）拒绝并返回 HTTP 400。
+- **Webhook 失败可观测性日志**：网络请求失败或服务端返回非 2xx（如 502/503/429/400）时，输出带有 HTTP 状态码、提供商及响应正文前 100 字符的清晰告警日志，显著提升连通性排障体验。
+- **通配清理脚本**：根目录 `package.json` 中的 `clean` 脚本重构为自动扫描所有 `dsh-*` 子包目录并清理构建产物，不再需要硬编码各子插件路径。
 - **Cordis v4 生命周期与资源清理（`ctx.effect`）**：针对 Cordis v4 微内核不再向事件总线广播 `'dispose'` 事件的特性，将总线 `fs.watch`、定时器以及子插件时间缓存的清理全面接入 `ctx.effect(() => () => cleanup())`，并向下兼容测试 Mock 与旧环境的 `ctx.on('dispose')`，彻底杜绝插件卸载后的句柄与内存泄漏。
 - **环境变量插值 JSON 字符安全转义**：`src/config.ts` 在插值未解析的 JSON 字符串前，使用 `JSON.stringify` 对变量内容进行安全转义，杜绝 Windows 路径反斜杠 `\`、双引号 `"` 等字符破坏 JSON 语法导致配置文件被静默判为损坏。
 - **热重载串行化排队**：`src/index.ts` 引入 `reloadQueue` 微型 Promise 互斥队列，强制文件监听器与设置表单保存严格串行执行，彻底消除多源并发调用导致的 `forks` 状态竞争与孤儿 Fiber 泄漏。

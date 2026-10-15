@@ -22,23 +22,39 @@ function isChineseLocale(): boolean {
 export function registerClientExtension() {
   const PLUGIN_ID = '@local/dsh-subagent-model-indicator';
 
+  if (typeof window === 'undefined') return;
+  const w = window as any;
+
+  // 防重复执行守卫：无论脚本被以任何形式注入或执行多少次，确保完全幂等
+  if (w.__subagent_model_indicator_registered__) return;
+  w.__subagent_model_indicator_registered__ = true;
+
   // 1. 尝试注册进 ModuleLoader（DSH 规范 bundle 机制）
-  if (typeof window !== 'undefined' && window.__ModuleLoader__?.load) {
-    try {
-      window.__ModuleLoader__.load({
-        id: PLUGIN_ID,
-        factory(require: any) {
-          const React = require('react');
-          return {
-            inject: ['slots', 'sessions'],
-            apply(ctx: any) {
-              setupSlots(ctx, React);
-            },
-          };
-        },
-      });
-    } catch {
-      // 容错处理
+  const ml = w.__ModuleLoader__;
+  if (ml?.load) {
+    // 防重保护 2：在 queue 模式下检查 pendingQueue，避免重复推入
+    const alreadyInQueue =
+      ml.mode === 'queue' &&
+      Array.isArray(ml.pendingQueue) &&
+      ml.pendingQueue.some((reg: any) => reg.id === PLUGIN_ID);
+
+    if (!alreadyInQueue) {
+      try {
+        ml.load({
+          id: PLUGIN_ID,
+          factory(require: any) {
+            const React = require('react');
+            return {
+              inject: ['slots', 'sessions'],
+              apply(ctx: any) {
+                setupSlots(ctx, React);
+              },
+            };
+          },
+        });
+      } catch {
+        // 容错处理
+      }
     }
   }
 
@@ -61,7 +77,7 @@ function setupSlots(ctx: any, React: any) {
     if (!modelInfo || !modelInfo.model) return null;
 
     const rawModel = modelInfo.model;
-    const modelName = formatModelName(rawModel);
+    const modelName = formatModelName(rawModel, true);
     const effort = modelInfo.reasoningEffort;
     const text = formatModelBadgeText(modelName, effort);
     const title = formatModelTooltip(
@@ -128,13 +144,17 @@ function setupSlots(ctx: any, React: any) {
 
 function mountDirectSlot() {
   function tryInject() {
-    const elements = document.querySelectorAll('*');
+    // 优先从 #root 或 body 直接子容器扫描，限制至多 50 个高层容器，避免深层会话产生千级全树遍历
+    const rootContainer = document.getElementById('root') || document.body;
+    const candidates = [rootContainer, ...Array.from(rootContainer.querySelectorAll(':scope > div, :scope > main, :scope > section, header, nav')).slice(0, 50)];
     let slotService: any = null;
-    for (const el of elements) {
+    for (const el of candidates) {
+      if (!el) continue;
       const key = Object.keys(el).find((k) => k.startsWith('__reactFiber'));
       if (!key) continue;
       let f = (el as any)[key];
-      while (f) {
+      let depth = 0;
+      while (f && depth++ < 30) {
         if (
           f.type &&
           typeof f.type === 'object' &&
@@ -181,7 +201,7 @@ function mountDirectSlot() {
               if (!modelInfo || !modelInfo.model) return null;
 
               const rawModel = modelInfo.model;
-              const modelName = formatModelName(rawModel);
+              const modelName = formatModelName(rawModel, true);
               const effort = modelInfo.reasoningEffort;
               const text = formatModelBadgeText(modelName, effort);
               const title = formatModelTooltip(

@@ -2,8 +2,12 @@
  * 格式化模型名称工具函数。
  * 将诸如 "remote-magpie/antigravity/gemini-3.8-flash" 或 "deepseek/deepseek-chat"
  * 转化为用户友好的展示标签。
+ * 可选参数 trimVersionSuffix 决定是否截断 -latest 或 -20241022 等长版本日期后缀（默认保持全名）。
  */
-export function formatModelName(fullModel: string | null | undefined): string {
+export function formatModelName(
+  fullModel: string | null | undefined,
+  trimVersionSuffix = false,
+): string {
   if (!fullModel || typeof fullModel !== 'string') return '';
   const parts = fullModel.split('/');
   let name = parts[parts.length - 1];
@@ -21,6 +25,10 @@ export function formatModelName(fullModel: string | null | undefined): string {
     name = name.replace(/^minimax-/i, 'MiniMax-');
   } else if (name.toLowerCase().startsWith('qwen-')) {
     name = name.replace(/^qwen-/i, 'Qwen-');
+  }
+
+  if (trimVersionSuffix) {
+    name = name.replace(/-(?:latest|\d{8})$/i, '');
   }
 
   return name;

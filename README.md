@@ -72,19 +72,22 @@
 
 - **快捷禁用**：设置 `"enabled": false` 可在模块导入前直接跳过该插件加载。
 - **配置剥离**：加载器透传给子插件前会自动剥离 `enabled` 字段，确保符合子插件的原生 Schema。
-- **环境变量插值**：配置值中支持 `${VAR_NAME}` 与 `${env:VAR_NAME}` 占位符，由 `process.env` 在加载时替换，**机密凭据无需落盘**：
+- **环境变量插值**：配置值中支持 `${VAR_NAME}`、`${env:VAR_NAME}` 以及默认值写法 `${VAR_NAME:-default_value}`，由 `process.env` 在加载时替换，**机密凭据无需落盘**：
 
   ```json
   {
     "plugins": {
       "notifier": {
-        "webhook": { "secret": "${NOTIFIER_WEBHOOK_SECRET}" }
+        "webhook": {
+          "url": "${WEBHOOK_URL:-https://open.feishu.cn/open-apis/bot/v2/hook/...}",
+          "secret": "${NOTIFIER_WEBHOOK_SECRET}"
+        }
       }
     }
   }
   ```
 
-  变量未定义时**原样保留占位符**（不会被静默替换为空串），便于直观发现漏配。
+  变量未定义且无默认值时**原样保留占位符**（不会被静默替换为空串），便于直观发现漏配。
 - **未知插件告警**：配置中若存在无法对应到任何已扫描子插件的键（改名、拼写错误或未安装），加载器会输出中文告警并列出当前已检测到的子插件名，避免配置被静默忽略。
 - **配置热重载**：保存 `plugins.config.json` 或 `plugins.config.local.json` 后约 300ms 自动生效 —— 启用 / 禁用的子插件会被动态挂载或销毁，持续启用的子插件则原地热更新参数，**无需重启 DSH**。
 
@@ -147,7 +150,7 @@
 - 清理产物：`npm run clean`（删除根与子插件的 `index.js` 构建产物）。
 - 类型检查：`npm run typecheck`（同时检查根 Loader 与所有子插件）。
 - 渠道诊断与测试：`npm run test:notify`（通过 CLI 一键测试桌面通知、提示音与 Webhook 连通性并测量耗时）。
-- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **88 项** + 通知子插件 **81 项**，共 169 项）。
+- 运行测试：`npm test`（自动运行所有工作区及根 Loader 全套测试套件，当前规模为根 Loader **91 项** + 通知子插件 **85 项** + 子智能体模型指示器 **15 项**，共 191 项测试全绿通过）。
 
 ## 维护日志
 

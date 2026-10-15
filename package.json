@@ -25,7 +25,7 @@
     "dsh-*"
   ],
   "scripts": {
-    "clean": "node -e \"fs.rmSync('index.js',{force:true}); fs.rmSync('dsh-notifier/index.js',{force:true}); fs.rmSync('dsh-subagent-model-indicator/index.js',{force:true}); fs.rmSync('dsh-subagent-model-indicator/client.js',{force:true})\"",
+    "clean": "node -e \"const fs = require('node:fs'), path = require('node:path'); fs.rmSync('index.js', { force: true }); for (const d of fs.readdirSync('.').filter(n => n.startsWith('dsh-'))) { fs.rmSync(path.join(d, 'index.js'), { force: true }); fs.rmSync(path.join(d, 'client.js'), { force: true }); }\"",
     "build:self": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=index.js",
     "build:plugins": "npm run build --workspaces",
     "build": "npm run build:plugins && npm run build:self",

@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本 (SemVer)](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复 (Fixed)
+- **Webhook 报文安全长度截断保护**：在 `sendWebhookNotification` 入口增加安全截断逻辑（上限 3000 字符），防止长错误堆栈超过平台上限（Telegram 4096 字符、企微 4096 字节等）导致 HTTP 400 失败并丢失关键告警。
+- **Webhook 失败可观测性日志**：网络请求失败或返回非 2xx 时，通过 `logFn` 输出清晰的包含 HTTP 状态码与响应体摘要的告警日志，便于连通性排查。
+
 ## [0.5.0] - 2026-10-12
 
 ### 移除 (Removed)

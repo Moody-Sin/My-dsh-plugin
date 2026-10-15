@@ -305,6 +305,7 @@ async function playNotificationSound(kind = "default", options = {}) {
 
 // src/channels/webhook.ts
 import crypto from "node:crypto";
+var MAX_WEBHOOK_MESSAGE_CHARS = 3e3;
 var DEFAULT_BARK_URL = "http://127.0.0.1:3080";
 function isHighPriorityEvent(event, kind) {
   return event === "user-questions/request" || event === "approval/request" || kind === "warning" || kind === "error";
@@ -320,7 +321,7 @@ function hasQueryParam(url, name2) {
 function generateFeishuSign(secret, timestamp) {
   const stringToSign = `${timestamp}
 ${secret}`;
-  return crypto.createHmac("sha256", stringToSign).update("").digest("base64");
+  return crypto.createHmac("sha256", stringToSign).digest("base64");
 }
 function generateDingTalkSign(secret, timestamp) {
   const stringToSign = `${timestamp}
@@ -343,7 +344,9 @@ async function sendWebhookNotification(config, payload, options = {}) {
   try {
     let targetUrl = config.url;
     let body;
-    const { title, message, event, kind = "info", metadata } = payload;
+    const { title, message: rawMessage, event, kind = "info", metadata } = payload;
+    const message = rawMessage && rawMessage.length > MAX_WEBHOOK_MESSAGE_CHARS ? `${rawMessage.slice(0, MAX_WEBHOOK_MESSAGE_CHARS - 20)}
+...[\u5DF2\u622A\u65AD]` : rawMessage;
     switch (config.provider) {
       case "feishu": {
         const templateColor = kind === "error" ? "red" : kind === "warning" ? "orange" : "blue";
@@ -458,11 +461,21 @@ ${escapedMessage}`,
       },
       body: JSON.stringify(body)
     };
+    const logger = options.logFn || console.warn;
     const send = async () => {
       const response = await fetchImpl(targetUrl, {
         ...requestInit,
         signal: AbortSignal.timeout(5e3)
       });
+      if (!response.ok) {
+        let errSnippet = "";
+        try {
+          const text = await response.text();
+          errSnippet = text ? ` - ${text.slice(0, 100)}` : "";
+        } catch {
+        }
+        logger(`[dsh-notifier] Webhook \u8BF7\u6C42\u5931\u8D25 [HTTP ${response.status}] [provider: ${config.provider}]${errSnippet}`);
+      }
       return response.ok;
     };
     let firstSuccess = false;
@@ -470,6 +483,7 @@ ${escapedMessage}`,
       firstSuccess = await send();
       if (firstSuccess) return true;
     } catch (firstError) {
+      logger(`[dsh-notifier] Webhook \u53D1\u9001\u5F02\u5E38 [provider: ${config.provider}]:`, firstError);
       if (!isHighPriorityEvent(event, kind)) {
         throw firstError;
       }

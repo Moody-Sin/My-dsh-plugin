@@ -690,6 +690,35 @@ test('热重载: 无关文件变更不触发重载', async (t) => {
   assert.equal(harness.mounted.length, 1);
 });
 
+test('热重载: 移除或新增 dsh-* 目录时能够被 watcher 感知并触发重载', async (t) => {
+  const { rootDir, mod } = await makeIsolatedRoot({
+    plugins: { notifier: { enabled: true }, 'dummy-demo': { enabled: true } },
+  });
+  const harness = createMockCtx();
+  t.after(async () => {
+    harness.dispose();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  // 1. 初始化并在 rootDir 下预先建立 dsh-dummy-demo
+  const dummyDir = path.join(rootDir, 'dsh-dummy-demo');
+  fs.mkdirSync(dummyDir, { recursive: true });
+  fs.writeFileSync(path.join(dummyDir, 'index.js'), 'export const name = "dummy-demo"; export function apply() {}', 'utf8');
+
+  await mod.apply(harness.ctx, {});
+  assert.equal(harness.mounted.length, 2, '初始应挂载 notifier 与 dummy-demo 两个插件');
+
+  // 2. 删除 dsh-dummy-demo 目录触发 watcher
+  fs.rmSync(dummyDir, { recursive: true, force: true });
+  // 等待防抖后执行 reload
+  await delay(600);
+
+  // 3. 验证 dummy-demo 对应的 fiber 是否被执行了 dispose
+  const dummyMount = harness.mounted.find((m) => m.pluginDef?.name === 'dummy-demo');
+  assert.ok(dummyMount, '此前应当存在 dummy-demo 的挂载记录');
+  assert.equal(dummyMount.fiber?.disposed, true, '物理目录移除后 fiber 必须被释放');
+});
+
 test('热重载: 连续多次写入被 300ms 防抖合并为一次重载', async (t) => {
   const { rootDir, mod } = await makeIsolatedRoot({
     plugins: { notifier: { enabled: true, volume: 0 } },
@@ -917,4 +946,23 @@ test('设置表单: 文件配置仍为最高权威，覆盖表单值（既定优
     'zh',
     '文件配置为最高权威，必须覆盖 Profile / 表单传入值',
   );
+});
+
+test('loader: dispose 必须级联释放所有子插件 Fiber', async (t) => {
+  let fiberDisposed = false;
+  const harness = createMockCtx({
+    fiber: () => ({
+      state: 2,
+      dispose: () => {
+        fiberDisposed = true;
+      },
+    }),
+  });
+  t.after(() => harness.dispose());
+
+  await apply(harness.ctx, { plugins: { notifier: { enabled: true } } });
+  assert.equal(fiberDisposed, false, '初始化后子插件不应被释放');
+
+  harness.dispose();
+  assert.equal(fiberDisposed, true, '宿主卸载总线时必须级联释放子插件 Fiber');
 });

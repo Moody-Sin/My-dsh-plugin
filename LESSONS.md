@@ -35,5 +35,7 @@
 ## 8. DSH 客户端插件与模块解析协议
 - **DSH 客户端插件 package.json 必须在 exports 中显式暴露 `"./package.json"`**：DSH 宿主在 `locatePkgJson` 中通过 `createRequire(baseUrl).resolve(`${expectedPackageName}/package.json`)` 寻找插件根，Node.js 默认禁止未导出 package.json 的包解析其自身 package.json，会导致无法定位客户端 bundle。
 - **子智能体模型感知机制**：DSH 会话投影中记录了 `modelSelection`（含 `lastUsed` 与 `next`），但原生 `ui-model-selection` 限制子智能体不挂载输入栏模型控件。通过在 `conversation.session.header.actions` 挂载徽标并校验 `session.origin === 'subagent'`，可优雅补齐模型名称与推理层级（Reasoning Effort）的展示，且完全不干扰主会话。
+- **前端 Slot 兜底拦截避免全量 DOM 扫描**：在向 React Fiber Provider 寻找 Slot 服务进行 Monkey-patch 时，应从 `#root` 等高层容器定向遍历并加设深度限制（如 `depth <= 30`），避免在巨型长会话下 `document.querySelectorAll('*')` 递归扫描引发页面主线程卡顿。
+
 
 
