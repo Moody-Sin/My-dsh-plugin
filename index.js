@@ -546,6 +546,9 @@ function scanPlugins(rootDir) {
 
 // src/index.ts
 var name = "my-dsh-plugins";
+var inject = {
+  optional: ["webServer"]
+};
 var ROOT_PACKAGE_NAME = "@local/my-dsh-plugins";
 var LOG_PREFIX = "[my-dsh-plugins]";
 var CONFIG_WATCH_DEBOUNCE_MS = 300;
@@ -748,17 +751,28 @@ async function apply(ctx, config) {
         res.end("Not Found");
       }
     };
-    if (typeof ctx?.webServer?.register === "function") {
-      ctx.effect?.(() => {
-        const unregisterExact = ctx.webServer.register({
-          kind: "prefix",
-          path: "/api/local-plugins",
-          handler: apiHandler
-        });
-        return () => {
-          unregisterExact?.();
-        };
-      });
+    const registerWebServerRoutes = (webCtx) => {
+      try {
+        if (typeof webCtx?.webServer?.register === "function") {
+          webCtx.effect?.(() => {
+            const unregisterExact = webCtx.webServer.register({
+              kind: "prefix",
+              path: "/api/local-plugins",
+              handler: apiHandler
+            });
+            return () => {
+              unregisterExact?.();
+            };
+          });
+        }
+      } catch (err) {
+        logger.warn("\u6CE8\u518C Web API \u8DEF\u7531\u5931\u8D25:", err);
+      }
+    };
+    if (typeof ctx?.inject === "function") {
+      ctx.inject(["webServer"], registerWebServerRoutes);
+    } else if (typeof ctx?.webServer?.register === "function") {
+      registerWebServerRoutes(ctx);
     }
     const clientBundlePath = fs4.existsSync(path4.join(rootDir, "client.js")) ? path4.join(rootDir, "client.js") : path4.join(path4.dirname(fileURLToPath(import.meta.url)), "client.js");
     const onIndexInject = (table) => {
@@ -828,6 +842,7 @@ async function apply(ctx, config) {
 export {
   Config,
   apply,
+  inject,
   name,
   resolveProjectRoot
 };

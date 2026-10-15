@@ -19,6 +19,16 @@ import { scanPlugins, type ScannedPlugin } from './scanner.ts';
 /** 聚合插件加载器的插件名，供 Cordis 日志与插件注册表识别 */
 export const name = 'my-dsh-plugins';
 
+/**
+ * 声明注入 webServer（可选服务）。
+ * 在 Cordis 中，如果未声明 inject: ['webServer'] 或未使用 ctx.inject(['webServer'], ...)，
+ * 访问 ctx.webServer 会因 Cordis 服务的延迟就绪或 Proxy 隔离而不可用，
+ * 导致 Web REST 路由从未被注册进 webServer！
+ */
+export const inject = {
+  optional: ['webServer'],
+};
+
 /** 根插件自身配置 Schema，交由宿主在启动前校验 */
 export { Config };
 
@@ -398,17 +408,29 @@ export async function apply(ctx: any, config?: any): Promise<void> {
       }
     };
 
-    if (typeof ctx?.webServer?.register === 'function') {
-      ctx.effect?.(() => {
-        const unregisterExact = ctx.webServer.register({
-          kind: 'prefix',
-          path: '/api/local-plugins',
-          handler: apiHandler,
-        });
-        return () => {
-          unregisterExact?.();
-        };
-      });
+    const registerWebServerRoutes = (webCtx: any) => {
+      try {
+        if (typeof webCtx?.webServer?.register === 'function') {
+          webCtx.effect?.(() => {
+            const unregisterExact = webCtx.webServer.register({
+              kind: 'prefix',
+              path: '/api/local-plugins',
+              handler: apiHandler,
+            });
+            return () => {
+              unregisterExact?.();
+            };
+          });
+        }
+      } catch (err) {
+        logger.warn('注册 Web API 路由失败:', err);
+      }
+    };
+
+    if (typeof ctx?.inject === 'function') {
+      ctx.inject(['webServer'], registerWebServerRoutes);
+    } else if (typeof ctx?.webServer?.register === 'function') {
+      registerWebServerRoutes(ctx);
     }
 
     // 通过 webserver/index-inject 注入客户端脚本
